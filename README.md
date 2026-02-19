@@ -23,10 +23,6 @@ Default launch scenario: two equal-mass bodies in a circular orbit (1 M☉ each,
 - **Body templates** — Sun, Earth, Jupiter, Black Hole, Neutron Star, Asteroid
 - **Fixed-timestep accumulator** — physics decoupled from frame rate
 
-## Screenshots
-
-> _Add screenshots here once the application is running._
-
 ## Requirements
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
@@ -36,7 +32,7 @@ Default launch scenario: two equal-mass bodies in a circular orbit (1 M☉ each,
 ## Building
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/SharonMathew4/celestial-mechanics-desktop.git
 cd celestial-mechanics-desktop
 dotnet build
 ```
