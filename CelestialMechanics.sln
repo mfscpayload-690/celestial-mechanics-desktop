@@ -1,0 +1,78 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{5A8FB137-973F-42CB-959B-9559AFAC8641}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Math", "src\CelestialMechanics.Math\CelestialMechanics.Math.csproj", "{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Physics", "src\CelestialMechanics.Physics\CelestialMechanics.Physics.csproj", "{F92A7EFD-17F8-4CED-BBAE-9AA7FCC60DB9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Simulation", "src\CelestialMechanics.Simulation\CelestialMechanics.Simulation.csproj", "{D427DEED-9425-4231-B97C-5AF45686B44C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Renderer", "src\CelestialMechanics.Renderer\CelestialMechanics.Renderer.csproj", "{37348507-3BEE-4B7E-BA47-2B6A37FC4C0B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Data", "src\CelestialMechanics.Data\CelestialMechanics.Data.csproj", "{7D65ED1F-4BF8-4BB2-A96C-7E7CC818CF8A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.App", "src\CelestialMechanics.App\CelestialMechanics.App.csproj", "{DDED945C-DF97-4C13-B413-9E52ABC9B8D1}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{C349DE58-F0BC-4D14-9959-93B155084097}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Math.Tests", "tests\CelestialMechanics.Math.Tests\CelestialMechanics.Math.Tests.csproj", "{747E5D58-F30A-4126-B47B-E3638E3F9BD8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Physics.Tests", "tests\CelestialMechanics.Physics.Tests\CelestialMechanics.Physics.Tests.csproj", "{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F92A7EFD-17F8-4CED-BBAE-9AA7FCC60DB9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F92A7EFD-17F8-4CED-BBAE-9AA7FCC60DB9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F92A7EFD-17F8-4CED-BBAE-9AA7FCC60DB9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F92A7EFD-17F8-4CED-BBAE-9AA7FCC60DB9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D427DEED-9425-4231-B97C-5AF45686B44C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D427DEED-9425-4231-B97C-5AF45686B44C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D427DEED-9425-4231-B97C-5AF45686B44C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D427DEED-9425-4231-B97C-5AF45686B44C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{37348507-3BEE-4B7E-BA47-2B6A37FC4C0B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{37348507-3BEE-4B7E-BA47-2B6A37FC4C0B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{37348507-3BEE-4B7E-BA47-2B6A37FC4C0B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{37348507-3BEE-4B7E-BA47-2B6A37FC4C0B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D65ED1F-4BF8-4BB2-A96C-7E7CC818CF8A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D65ED1F-4BF8-4BB2-A96C-7E7CC818CF8A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D65ED1F-4BF8-4BB2-A96C-7E7CC818CF8A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D65ED1F-4BF8-4BB2-A96C-7E7CC818CF8A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DDED945C-DF97-4C13-B413-9E52ABC9B8D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DDED945C-DF97-4C13-B413-9E52ABC9B8D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DDED945C-DF97-4C13-B413-9E52ABC9B8D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DDED945C-DF97-4C13-B413-9E52ABC9B8D1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{747E5D58-F30A-4126-B47B-E3638E3F9BD8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{747E5D58-F30A-4126-B47B-E3638E3F9BD8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{747E5D58-F30A-4126-B47B-E3638E3F9BD8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{747E5D58-F30A-4126-B47B-E3638E3F9BD8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{F92A7EFD-17F8-4CED-BBAE-9AA7FCC60DB9} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{D427DEED-9425-4231-B97C-5AF45686B44C} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{37348507-3BEE-4B7E-BA47-2B6A37FC4C0B} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{7D65ED1F-4BF8-4BB2-A96C-7E7CC818CF8A} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{DDED945C-DF97-4C13-B413-9E52ABC9B8D1} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{747E5D58-F30A-4126-B47B-E3638E3F9BD8} = {C349DE58-F0BC-4D14-9959-93B155084097}
+		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8} = {C349DE58-F0BC-4D14-9959-93B155084097}
+	EndGlobalSection
+EndGlobal

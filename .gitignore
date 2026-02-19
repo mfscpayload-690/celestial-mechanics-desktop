@@ -1,0 +1,125 @@
+# =========================
+# .NET / C# .gitignore
+# =========================
+
+## Build outputs
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.userprefs
+.idea/
+*.DotSettings.user
+
+## NuGet
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nupkg
+**/packages/repositories.config
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+## MSBuild
+*.csproj.nuget.g.props
+*.csproj.nuget.g.targets
+*.csproj.nuget.cache
+
+## Publish output
+publish/
+
+## Dotnet tool manifests
+.config/dotnet-tools.json
+
+## Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResult.xml
+*.trx
+coverage*.xml
+coverage*.json
+*.coveragexml
+*.coverage
+*.coveragesettings
+
+## OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+## Temp / swap / backup files
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+*.temp
+*.orig
+
+## Claude Code temp files
+tmpclaude-*
+nul
+
+## Secrets / credentials — NEVER commit these
+*.env
+.env.*
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+secrets.json
+credentials.json
+*.pfx
+*.p12
+*.key
+*.pem
+
+## Native binaries / debug symbols
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.meta
+*.obj
+*.iobj
+*.ipdb
+*.lib
+*.sbr
+*.exp
+*.so
+*.dylib
+
+## JetBrains Rider
+.idea/
+*.sln.iml
+
+## NCrunch
+_NCrunch_*
+.*crunch*.local.xml
+nCrunchTemp_*
+
+## Benchmark / profiling
+BenchmarkDotNet.Artifacts/
+
+## Resolved plan file
+*.resolved
