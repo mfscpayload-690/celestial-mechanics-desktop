@@ -40,6 +40,20 @@ public class SimulationEngine
             RangeScale = _config.GravityRangeScale
         });
         _solver.SetIntegrator(new VerletIntegrator());
+
+        // Wire SoA path from config. SoA is only available for the Verlet
+        // integrator; Euler and RK4 fall back to the AoS path automatically
+        // (see SetIntegrator below).
+        _solver.ConfigureSoA(
+            enabled:          _config.UseSoAPath,
+            softening:        _config.SofteningEpsilon,
+            deterministic:    _config.DeterministicMode,
+            useParallel:      _config.UseParallelComputation,
+            useBarnesHut:     _config.UseBarnesHut,
+            theta:            _config.Theta,
+            enableCollisions: _config.EnableCollisions,
+            useSimd:          _config.UseSimd
+        );
     }
 
     public void SetBodies(PhysicsBody[] bodies)
@@ -84,9 +98,10 @@ public class SimulationEngine
     public void StepOnce()
     {
         // Single physics step (for step mode)
+        double dt = ComputeDt();
         _previousState = _currentState;
-        _currentState = _solver.Step(_bodies, _fixedDt);
-        CurrentTime += _fixedDt;
+        _currentState = _solver.Step(_bodies, dt);
+        CurrentTime += dt;
     }
 
     public void Update(double frameTime)
@@ -95,15 +110,50 @@ public class SimulationEngine
 
         _accumulator += frameTime;
 
-        while (_accumulator >= _fixedDt)
+        double dt = ComputeDt();
+        while (_accumulator >= dt)
         {
             _previousState = _currentState;
-            _currentState = _solver.Step(_bodies, _fixedDt);
-            _accumulator -= _fixedDt;
-            CurrentTime += _fixedDt;
+            _currentState = _solver.Step(_bodies, dt);
+            _accumulator -= dt;
+            CurrentTime += dt;
+
+            // Recompute dt after each step (accelerations may have changed)
+            if (_config.UseAdaptiveTimestep && !_config.DeterministicMode)
+                dt = ComputeDt();
         }
 
-        InterpolationAlpha = _accumulator / _fixedDt;
+        InterpolationAlpha = dt > 0 ? _accumulator / dt : 0.0;
+    }
+
+    /// <summary>
+    /// Compute the effective timestep. In deterministic mode or when adaptive
+    /// is disabled, returns the fixed dt. Otherwise uses an acceleration-based
+    /// heuristic: dt = η / √(max_acc), clamped to [MinDt, MaxDt].
+    /// </summary>
+    private double ComputeDt()
+    {
+        if (_config.DeterministicMode || !_config.UseAdaptiveTimestep)
+            return _fixedDt;
+
+        // Find maximum acceleration magnitude across all active bodies
+        double maxAcc2 = 0.0;
+        for (int i = 0; i < _bodies.Length; i++)
+        {
+            if (!_bodies[i].IsActive) continue;
+            ref var acc = ref _bodies[i].Acceleration;
+            double a2 = acc.X * acc.X + acc.Y * acc.Y + acc.Z * acc.Z;
+            if (a2 > maxAcc2) maxAcc2 = a2;
+        }
+
+        if (maxAcc2 < 1e-30)
+            return _config.MaxDt;
+
+        // Safety factor η = 0.1 (conservative; dt = 0.1 / √max_acc)
+        const double eta = 0.1;
+        double dtAdaptive = eta / System.Math.Sqrt(System.Math.Sqrt(maxAcc2));
+
+        return System.Math.Clamp(dtAdaptive, _config.MinDt, _config.MaxDt);
     }
 
     public void SetIntegrator(string name)
@@ -116,6 +166,21 @@ public class SimulationEngine
             _ => throw new ArgumentException($"Unknown integrator: {name}", nameof(name))
         };
         _solver.SetIntegrator(integrator);
+
+        // SoA Verlet is only available for the symplectic Verlet integrator.
+        // Euler and RK4 fall back to the AoS path automatically; switching to
+        // Verlet re-enables whatever the config requested.
+        bool soaCapable = name == "Verlet";
+        _solver.ConfigureSoA(
+            enabled:          soaCapable && _config.UseSoAPath,
+            softening:        _config.SofteningEpsilon,
+            deterministic:    _config.DeterministicMode,
+            useParallel:      _config.UseParallelComputation,
+            useBarnesHut:     _config.UseBarnesHut,
+            theta:            _config.Theta,
+            enableCollisions: _config.EnableCollisions,
+            useSimd:          _config.UseSimd
+        );
     }
 
     public string GetIntegratorName()

@@ -1,125 +1,43 @@
-# =========================
-# .NET / C# .gitignore
-# =========================
-
-## Build outputs
+# .NET Core
 [Bb]in/
 [Oo]bj/
+[Tt]estResult.xml
 [Dd]ebug/
 [Rr]elease/
-x64/
-x86/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
-bld/
-[Ll]og/
-[Ll]ogs/
+*.user
+*.userosscache
+*.sln.docstates
 
-## Visual Studio / Rider / VS Code
+# Visual Studio
 .vs/
-.vscode/
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
-*.rsuser
-*.userprefs
-.idea/
-*.DotSettings.user
-
-## NuGet
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
-*.nupkg
-**/packages/repositories.config
-project.lock.json
-project.fragment.lock.json
-artifacts/
-
-## MSBuild
-*.csproj.nuget.g.props
-*.csproj.nuget.g.targets
-*.csproj.nuget.cache
-
-## Publish output
-publish/
-
-## Dotnet tool manifests
-.config/dotnet-tools.json
-
-## Test results
-[Tt]est[Rr]esult*/
-[Bb]uild[Ll]og.*
-TestResult.xml
-*.trx
-coverage*.xml
-coverage*.json
-*.coveragexml
-*.coverage
-*.coveragesettings
-
-## OS files
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-
-## Temp / swap / backup files
-*~
-*.swp
-*.swo
-*.bak
-*.tmp
-*.temp
-*.orig
-
-## Claude Code temp files
-tmpclaude-*
-nul
-
-## Secrets / credentials — NEVER commit these
-*.env
-.env.*
-appsettings.*.json
-!appsettings.json
-!appsettings.Development.json
-secrets.json
-credentials.json
-*.pfx
-*.p12
-*.key
-*.pem
-
-## Native binaries / debug symbols
 *.dll
-*.exe
 *.pdb
-*.ilk
-*.meta
-*.obj
-*.iobj
-*.ipdb
-*.lib
-*.sbr
-*.exp
-*.so
-*.dylib
+*.exe
 
-## JetBrains Rider
+# JetBrains Rider
 .idea/
 *.sln.iml
 
-## NCrunch
-_NCrunch_*
-.*crunch*.local.xml
-nCrunchTemp_*
+# OS generated files
+.DS_Store
+Thumbs.db
 
-## Benchmark / profiling
-BenchmarkDotNet.Artifacts/
+# Project specific
+.gemini/
+*.log
+test_out.txt
+tmpclaude-*
 
-## Resolved plan file
-*.resolved
+# Artifacts (if they happen to be in proj dir)
+brain/
+implementation_plan.md
+task.md
+walkthrough.md
+
+# Build
+artifacts/
+publish/

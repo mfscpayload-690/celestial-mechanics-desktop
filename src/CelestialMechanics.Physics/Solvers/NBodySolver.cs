@@ -1,22 +1,72 @@
 using CelestialMechanics.Math;
+using CelestialMechanics.Physics.Collisions;
 using CelestialMechanics.Physics.Forces;
 using CelestialMechanics.Physics.Integrators;
+using CelestialMechanics.Physics.SoA;
 using CelestialMechanics.Physics.Types;
 using CelestialMechanics.Physics.Validation;
 
 namespace CelestialMechanics.Physics.Solvers;
 
 /// <summary>
-/// O(n^2) pairwise N-body solver. Delegates integration to an IIntegrator
-/// and force computation to registered IForceCalculator instances.
-/// Tracks energy drift relative to initial total energy.
+/// O(n²) pairwise N-body solver. Supports two execution paths:
+///
+/// AoS PATH (legacy, backward-compatible)
+/// ----------------------------------------
+/// Delegates integration to <see cref="IIntegrator"/> and force computation to
+/// registered <see cref="IForceCalculator"/> instances. Used by existing tests
+/// and by the Euler / RK4 integrators which have no SoA equivalents.
+///
+/// SoA PATH (high-performance)
+/// ---------------------------
+/// Uses a <see cref="ISoAIntegrator"/> backed by an <see cref="IPhysicsComputeBackend"/>
+/// to integrate directly on the cache-efficient <see cref="BodySoA"/> buffer.
+/// Enabled via <see cref="ConfigureSoA"/>.
+///
+/// Backend selection:
+///   UseBarnesHut = true  → <see cref="BarnesHutBackend"/> (O(n log n))
+///   DeterministicMode = true  → <see cref="CpuSingleThreadBackend"/> (reproducible)
+///   DeterministicMode = false + UseParallelComputation = true
+///                             → <see cref="CpuParallelBackend"/> (max throughput)
+///
+/// Energy and momentum diagnostics are computed from the AoS <c>PhysicsBody[]</c>
+/// array; the SoA path writes back via <see cref="BodySoA.CopyTo"/> before
+/// diagnostics run — O(n) overhead vs. the O(n²) hot path.
 /// </summary>
 public class NBodySolver
 {
+    // ── AoS path ───────────────────────────────────────────────────────────────
     private readonly List<IForceCalculator> _forces = new();
     private IIntegrator _integrator;
-    private readonly EnergyCalculator _energy = new();
+    private IForceCalculator[]? _forcesCache;  // avoids per-step ToArray() alloc
 
+    // ── SoA path ───────────────────────────────────────────────────────────────
+    private BodySoA? _soaBodies;
+    private ISoAIntegrator _soaIntegrator;
+    private readonly IPhysicsComputeBackend _singleThreadBackend;
+    private readonly IPhysicsComputeBackend _parallelBackend;
+    private bool _useSoA;
+    private bool _deterministicMode;
+    private bool _useParallel;
+    private double _softening;
+
+    // ── Barnes-Hut path (Phase 3) ──────────────────────────────────────────────
+    private BarnesHutBackend? _barnesHutSingleBackend;
+    private BarnesHutBackend? _barnesHutParallelBackend;
+    private bool _useBarnesHut;
+    private double _theta = 0.5;
+
+    // ── Collision system (Phase 4) ─────────────────────────────────────────────
+    private readonly CollisionDetector _collisionDetector = new();
+    private readonly CollisionResolver _collisionResolver = new();
+    private bool _enableCollisions;
+
+    // ── SIMD (Phase 5) ─────────────────────────────────────────────────────
+    private readonly SimdSingleThreadBackend _simdBackend = new();
+    private bool _useSimd;
+
+    // ── Shared ─────────────────────────────────────────────────────────────────
+    private readonly EnergyCalculator _energy = new();
     public IIntegrator CurrentIntegrator => _integrator;
     private double _currentTime;
     private double _initialEnergy;
@@ -24,15 +74,31 @@ public class NBodySolver
 
     public NBodySolver()
     {
-        _integrator = new VerletIntegrator();
-        _currentTime = 0.0;
-        _initialEnergy = 0.0;
+        _integrator          = new VerletIntegrator();
+        _soaIntegrator       = new SoAVerletIntegrator();
+        _singleThreadBackend = new CpuSingleThreadBackend();
+        _parallelBackend     = new CpuParallelBackend();
+
+        // SoA disabled by default so existing tests continue to work unchanged.
+        _useSoA            = false;
+        _deterministicMode = true;
+        _useParallel       = false;
+        _useBarnesHut      = false;
+        _enableCollisions  = false;
+        _useSimd           = false;
+        _softening         = 1e-4;
+
+        _currentTime      = 0.0;
+        _initialEnergy    = 0.0;
         _initialEnergySet = false;
     }
+
+    // ── Configuration ──────────────────────────────────────────────────────────
 
     public void AddForce(IForceCalculator force)
     {
         _forces.Add(force);
+        _forcesCache = null;
     }
 
     public void SetIntegrator(IIntegrator integrator)
@@ -41,22 +107,95 @@ public class NBodySolver
     }
 
     /// <summary>
-    /// Advance the simulation by one timestep. Calls the integrator,
-    /// computes energy diagnostics, and returns a snapshot of the simulation state.
+    /// Enable or reconfigure the SoA execution path.
+    /// </summary>
+    /// <param name="enabled">true to use SoA Verlet + backend.</param>
+    /// <param name="softening">Gravitational softening ε (simulation length units).</param>
+    /// <param name="deterministic">
+    ///   true  → single-thread backend, bit-reproducible across runs.<br/>
+    ///   false → respects <paramref name="useParallel"/>.
+    /// </param>
+    /// <param name="useParallel">
+    ///   When <paramref name="deterministic"/> is false, true selects
+    ///   <see cref="CpuParallelBackend"/> (<c>Parallel.For</c> over bodies).
+    /// </param>
+    /// <param name="useBarnesHut">
+    ///   When true, selects the Barnes-Hut O(n log n) backend instead of
+    ///   the O(n²) brute-force backend.
+    /// </param>
+    /// <param name="theta">
+    ///   Barnes-Hut opening angle parameter θ. Only used when
+    ///   <paramref name="useBarnesHut"/> is true. Default 0.5.
+    /// </param>
+    public void ConfigureSoA(bool enabled, double softening,
+                             bool deterministic = true, bool useParallel = false,
+                             bool useBarnesHut = false, double theta = 0.5,
+                             bool enableCollisions = false, bool useSimd = false)
+    {
+        _useSoA            = enabled;
+        _softening         = softening;
+        _deterministicMode = deterministic;
+        _useParallel       = useParallel;
+        _useBarnesHut      = useBarnesHut;
+        _theta             = theta;
+        _enableCollisions  = enableCollisions;
+        _useSimd           = useSimd;
+
+        // Lazily create Barnes-Hut backends only when needed
+        if (useBarnesHut)
+        {
+            if (_barnesHutSingleBackend == null)
+            {
+                _barnesHutSingleBackend = new BarnesHutBackend
+                {
+                    Theta = theta,
+                    UseParallel = false
+                };
+            }
+            else
+            {
+                _barnesHutSingleBackend.Theta = theta;
+            }
+
+            if (_barnesHutParallelBackend == null)
+            {
+                _barnesHutParallelBackend = new BarnesHutBackend
+                {
+                    Theta = theta,
+                    UseParallel = true
+                };
+            }
+            else
+            {
+                _barnesHutParallelBackend.Theta = theta;
+            }
+        }
+    }
+
+    // ── Step ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Advance the simulation by one timestep, then return an immutable
+    /// diagnostics snapshot.
     /// </summary>
     public SimulationState Step(PhysicsBody[] bodies, double dt)
     {
-        _integrator.Step(bodies, dt, _forces.ToArray());
+        if (_useSoA)
+            StepSoA(bodies, dt);
+        else
+            StepAoS(bodies, dt);
+
         _currentTime += dt;
 
-        double ke = _energy.ComputeKE(bodies);
-        double pe = _energy.ComputePE(bodies, _forces);
+        IForceCalculator[] fc = GetForcesCache();
+        double ke          = _energy.ComputeKE(bodies);
+        double pe          = _energy.ComputePE(bodies, fc);
         double totalEnergy = ke + pe;
-        Vec3d momentum = _energy.ComputeMomentum(bodies);
+        Vec3d  momentum    = _energy.ComputeMomentum(bodies);
 
         if (!_initialEnergySet)
         {
-            _initialEnergy = totalEnergy;
+            _initialEnergy    = totalEnergy;
             _initialEnergySet = true;
         }
 
@@ -64,24 +203,97 @@ public class NBodySolver
             ? (totalEnergy - _initialEnergy) / System.Math.Abs(_initialEnergy)
             : 0.0;
 
+        int activeCount = 0;
+        for (int i = 0; i < bodies.Length; i++)
+            if (bodies[i].IsActive) activeCount++;
+
         return new SimulationState
         {
-            Time = _currentTime,
-            BodyCount = bodies.Length,
-            KineticEnergy = ke,
-            PotentialEnergy = pe,
-            TotalMomentum = momentum,
-            EnergyDrift = energyDrift
+            Time             = _currentTime,
+            BodyCount        = bodies.Length,
+            ActiveBodyCount  = activeCount,
+            KineticEnergy    = ke,
+            PotentialEnergy  = pe,
+            TotalMomentum    = momentum,
+            EnergyDrift      = energyDrift,
+            CollisionCount   = _collisionResolver.LastCollisionCount,
+            CurrentDt        = dt
         };
     }
 
+    // ── Private ────────────────────────────────────────────────────────────────
+
+    private void StepSoA(PhysicsBody[] bodies, double dt)
+    {
+        if (_soaBodies == null || _soaBodies.Capacity < bodies.Length)
+            _soaBodies = new BodySoA(NextPowerOfTwo(System.Math.Max(bodies.Length, 16)));
+
+        _soaBodies.CopyFrom(bodies);
+        _soaIntegrator.Step(_soaBodies, SelectBackend(), _softening, dt);
+
+        // ── Collision detection and resolution (after integration) ────────
+        if (_enableCollisions)
+        {
+            var events = _collisionDetector.Detect(_soaBodies);
+            if (events.Count > 0)
+                _collisionResolver.Resolve(events, _soaBodies, bodies);
+        }
+
+        _soaBodies.CopyTo(bodies);
+    }
+
+    private void StepAoS(PhysicsBody[] bodies, double dt)
+    {
+        _integrator.Step(bodies, dt, GetForcesCache());
+    }
+
     /// <summary>
-    /// Reset the solver to initial state. Clears time and initial energy reference.
+    /// Select the appropriate force computation backend based on configuration.
+    ///
+    /// Priority:
+    ///   1. UseBarnesHut = true → Barnes-Hut backend (single or parallel)
+    ///   2. DeterministicMode = true → CpuSingleThreadBackend
+    ///   3. UseParallel = true → CpuParallelBackend
+    ///   4. Default → CpuSingleThreadBackend
     /// </summary>
+    private IPhysicsComputeBackend SelectBackend()
+    {
+        if (_useBarnesHut)
+        {
+            // Deterministic mode trumps parallel flag
+            if (_deterministicMode)
+                return _barnesHutSingleBackend!;
+
+            return _useParallel ? _barnesHutParallelBackend! : _barnesHutSingleBackend!;
+        }
+
+        // Original brute-force selection
+        if (_useSimd)
+            return _simdBackend;
+
+        if (_deterministicMode)
+            return _singleThreadBackend;
+
+        return _useParallel ? _parallelBackend : _singleThreadBackend;
+    }
+
+    private IForceCalculator[] GetForcesCache()
+    {
+        return _forcesCache ??= _forces.ToArray();
+    }
+
+    private static int NextPowerOfTwo(int n)
+    {
+        int p = 1;
+        while (p < n) p <<= 1;
+        return p;
+    }
+
+    /// <summary>Reset time and initial-energy reference.</summary>
     public void Reset()
     {
-        _currentTime = 0.0;
-        _initialEnergy = 0.0;
+        _currentTime      = 0.0;
+        _initialEnergy    = 0.0;
         _initialEnergySet = false;
     }
 }

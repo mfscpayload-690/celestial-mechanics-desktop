@@ -31,7 +31,7 @@ public class RenderState
         if (Bodies.Length < physicsBodies.Length)
             Bodies = new RenderBody[physicsBodies.Length];
 
-        BodyCount = physicsBodies.Length;
+        int activeCount = 0;
         float alpha = (float)engine.InterpolationAlpha;
         InterpolationAlpha = alpha;
 
@@ -40,26 +40,27 @@ public class RenderState
             ref var body = ref physicsBodies[i];
             if (!body.IsActive) continue;
 
-            Bodies[i] = new RenderBody
+            Bodies[activeCount++] = new RenderBody
             {
                 Id = body.Id,
                 Position = new Vector3((float)body.Position.X, (float)body.Position.Y, (float)body.Position.Z),
-                Radius = MathF.Max(0.02f, (float)body.Radius),
+                Radius = MathF.Max(0.01f, (float)body.Radius),
                 Color = GetBodyColor(body.Type),
                 BodyType = (int)body.Type
             };
         }
+        BodyCount = activeCount;
     }
 
     private static Vector4 GetBodyColor(BodyType type) => type switch
     {
         BodyType.Star => new Vector4(1.0f, 0.9f, 0.3f, 1.0f),
-        BodyType.Planet or BodyType.RockyPlanet => new Vector4(0.2f, 0.4f, 0.8f, 0.5f),
-        BodyType.GasGiant => new Vector4(0.8f, 0.7f, 0.5f, 0.5f),
-        BodyType.Moon => new Vector4(0.7f, 0.7f, 0.7f, 0.5f),
-        BodyType.Asteroid or BodyType.Comet => new Vector4(0.5f, 0.5f, 0.4f, 0.5f),
+        BodyType.Planet or BodyType.RockyPlanet => new Vector4(0.2f, 0.4f, 0.8f, 1.0f),
+        BodyType.GasGiant => new Vector4(0.8f, 0.7f, 0.5f, 1.0f),
+        BodyType.Moon => new Vector4(0.7f, 0.7f, 0.7f, 1.0f),
+        BodyType.Asteroid or BodyType.Comet => new Vector4(0.5f, 0.5f, 0.4f, 1.0f),
         BodyType.NeutronStar => new Vector4(0.5f, 0.8f, 1.0f, 1.0f),
-        BodyType.BlackHole => new Vector4(0.2f, 0.0f, 0.4f, 0.5f),
-        _ => new Vector4(0.6f, 0.6f, 0.6f, 0.5f),
+        BodyType.BlackHole => new Vector4(0.1f, 0.0f, 0.1f, 0.7f), // Darker, slightly transparent
+        _ => new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
     };
 }

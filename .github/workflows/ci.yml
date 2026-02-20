@@ -1,0 +1,151 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Continuous Integration — Celestial Mechanics Desktop
+#
+#  Jobs (all run in parallel):
+#    build-check   Verifies the solution compiles on Windows, Linux, and macOS.
+#    test          Runs all unit tests + collects code coverage (Linux runner).
+#
+#  The App and Renderer projects reference Silk.NET / OpenGL native libraries
+#  which are dynamically loaded at *runtime* only, so headless CI build is fine.
+#  Tests (Math.Tests, Physics.Tests) are pure .NET — no GPU or display required.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+
+# Cancel in-progress runs on the same branch/PR to save runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  #  Job 1 — Cross-platform build verification
+  #  Catches compiler errors early across all target operating systems.
+  # ───────────────────────────────────────────────────────────────────────────
+  build-check:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false           # Report all platform failures, not just the first
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'   # Resolves to latest 8.0 patch, matching global.json
+
+      # Cache restored packages keyed on csproj contents.
+      # A change to any project file invalidates the cache and triggers a full restore.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore CelestialMechanics.sln
+
+      - name: Build (Release)
+        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release
+
+  # ───────────────────────────────────────────────────────────────────────────
+  #  Job 2 — Unit tests + code coverage
+  #  Runs on Linux (fastest free tier, no GUI needed for physics/math tests).
+  #  Uploads: test results (.trx) and coverage report (Cobertura XML).
+  # ───────────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests & Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore CelestialMechanics.sln
+
+      # Build in Release to match the configuration used by build-check.
+      - name: Build (Release)
+        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release
+
+      # ── Math unit tests ────────────────────────────────────────────────────
+      - name: Test — CelestialMechanics.Math
+        run: >
+          dotnet test
+          tests/CelestialMechanics.Math.Tests/CelestialMechanics.Math.Tests.csproj
+          --no-build
+          --configuration Release
+          --logger "trx;LogFileName=math-results.trx"
+          --results-directory ./test-results/math
+          --collect:"XPlat Code Coverage"
+          --
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      # ── Physics unit tests (integrators, gravity, conservation laws) ───────
+      - name: Test — CelestialMechanics.Physics
+        run: >
+          dotnet test
+          tests/CelestialMechanics.Physics.Tests/CelestialMechanics.Physics.Tests.csproj
+          --no-build
+          --configuration Release
+          --logger "trx;LogFileName=physics-results.trx"
+          --results-directory ./test-results/physics
+          --collect:"XPlat Code Coverage"
+          --
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      # ── Publish artifacts (always, so failures are still inspectable) ──────
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: ./test-results/**/*.trx
+          retention-days: 14
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: ./test-results/**/coverage.cobertura.xml
+          retention-days: 14

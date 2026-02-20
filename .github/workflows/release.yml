@@ -1,0 +1,209 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"       # stable:      v1.0.0
+      - "v[0-9]+.[0-9]+.[0-9]+-*"     # pre-release: v1.0.0-beta.1
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  #  Gate — all unit tests must pass before any artifact is built or published.
+  #  A broken release is worse than a delayed release.
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests (gate)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore CelestialMechanics.sln
+
+      - name: Build (Release)
+        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release
+
+      - name: Test — Math
+        run: >
+          dotnet test
+          tests/CelestialMechanics.Math.Tests/CelestialMechanics.Math.Tests.csproj
+          --no-build --configuration Release
+          --logger "trx;LogFileName=math-results.trx"
+          --results-directory ./test-results
+
+      - name: Test — Physics
+        run: >
+          dotnet test
+          tests/CelestialMechanics.Physics.Tests/CelestialMechanics.Physics.Tests.csproj
+          --no-build --configuration Release
+          --logger "trx;LogFileName=physics-results.trx"
+          --results-directory ./test-results
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-test-results
+          path: ./test-results/**/*.trx
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────────
+  #  Publish — three platform jobs running in parallel after tests pass.
+  #
+  #  self-contained: bundles the .NET 8 runtime; users need no SDK installed.
+  #  PublishSingleFile: one executable file per platform.
+  #  PublishTrimmed=false: Silk.NET and ImGui.NET use reflection; trimming
+  #    silently breaks P/Invoke resolution at runtime — do not enable.
+  #  PublishReadyToRun=true: ahead-of-time native code, faster cold startup.
+  # ─────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    needs: test
+
+    strategy:
+      fail-fast: false      # All three platforms are reported even if one fails
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            archive_name: CelestialMechanics-win-x64.zip
+            archive_cmd: zip
+
+          - os: ubuntu-latest
+            rid: linux-x64
+            archive_name: CelestialMechanics-linux-x64.tar.gz
+            archive_cmd: tar
+
+          # macos-latest = macOS 14 (Apple Silicon M1, ARM64)
+          - os: macos-latest
+            rid: osx-arm64
+            archive_name: CelestialMechanics-osx-arm64.tar.gz
+            archive_cmd: tar
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Publish
+        run: >
+          dotnet publish
+          src/CelestialMechanics.App/CelestialMechanics.App.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishReadyToRun=true
+          -p:PublishTrimmed=false
+          --output ./publish/${{ matrix.rid }}
+
+      # Windows — PowerShell Compress-Archive
+      - name: Archive (Windows)
+        if: matrix.archive_cmd == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "./publish/${{ matrix.rid }}/*" `
+            -DestinationPath "./${{ matrix.archive_name }}"
+
+      # Linux / macOS — tar
+      - name: Archive (Unix)
+        if: matrix.archive_cmd == 'tar'
+        run: |
+          tar -czf "./${{ matrix.archive_name }}" \
+            -C "./publish/${{ matrix.rid }}" .
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ./${{ matrix.archive_name }}
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────
+  #  Create GitHub Release
+  #  Waits for all three publish jobs, downloads every platform archive,
+  #  and creates (or updates) the GitHub Release for the pushed tag.
+  #  Tags with a hyphen (v1.0.0-beta.1) are automatically marked pre-release.
+  # ─────────────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write       # Required to create releases and upload assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all platform archives
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-assets
+          merge-multiple: true     # Flatten sub-directories into one folder
+
+      - name: List release assets
+        run: ls -lh ./release-assets/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Tags containing a hyphen are pre-releases
+          if [[ "$TAG" == *"-"* ]]; then PRERELEASE="--prerelease"; else PRERELEASE=""; fi
+
+          NOTES=$(cat <<EONOTES
+          ## ${TAG}
+
+          ### Downloads
+          | Platform      | Archive                                  |
+          |---------------|------------------------------------------|
+          | Windows x64   | CelestialMechanics-win-x64.zip           |
+          | Linux x64     | CelestialMechanics-linux-x64.tar.gz      |
+          | macOS ARM64   | CelestialMechanics-osx-arm64.tar.gz      |
+
+          ### Installation
+          Extract the archive and run the executable.
+          No additional runtime required — .NET 8 is bundled in the package.
+
+          Full changelog: https://github.com/${REPO}/blob/main/README.md#changelog
+          EONOTES
+          )
+
+          gh release create "$TAG" \
+            --title "Celestial Mechanics Desktop ${TAG}" \
+            --notes "$NOTES" \
+            $PRERELEASE \
+            ./release-assets/*

@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\CelestialMechanics.Math\CelestialMechanics.Math.csproj" />
     <ProjectReference Include="..\CelestialMechanics.Physics\CelestialMechanics.Physics.csproj" />
   </ItemGroup>
 

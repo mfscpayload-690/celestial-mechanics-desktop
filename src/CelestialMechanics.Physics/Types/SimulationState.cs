@@ -10,9 +10,12 @@ public class SimulationState
 {
     public double Time { get; init; }
     public int BodyCount { get; init; }
+    public int ActiveBodyCount { get; init; }
     public double KineticEnergy { get; init; }
     public double PotentialEnergy { get; init; }
     public double TotalEnergy => KineticEnergy + PotentialEnergy;
     public Vec3d TotalMomentum { get; init; }
     public double EnergyDrift { get; init; }
+    public int CollisionCount { get; init; }
+    public double CurrentDt { get; init; }
 }
