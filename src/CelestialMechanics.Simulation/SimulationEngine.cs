@@ -45,14 +45,21 @@ public class SimulationEngine
         // integrator; Euler and RK4 fall back to the AoS path automatically
         // (see SetIntegrator below).
         _solver.ConfigureSoA(
-            enabled:          _config.UseSoAPath,
-            softening:        _config.SofteningEpsilon,
-            deterministic:    _config.DeterministicMode,
-            useParallel:      _config.UseParallelComputation,
-            useBarnesHut:     _config.UseBarnesHut,
-            theta:            _config.Theta,
-            enableCollisions: _config.EnableCollisions,
-            useSimd:          _config.UseSimd
+            enabled:                  _config.UseSoAPath,
+            softening:                _config.SofteningEpsilon,
+            deterministic:            _config.DeterministicMode,
+            useParallel:              _config.UseParallelComputation,
+            useBarnesHut:             _config.UseBarnesHut,
+            theta:                    _config.Theta,
+            enableCollisions:         _config.EnableCollisions,
+            useSimd:                  _config.UseSimd,
+            enablePostNewtonian:      _config.EnablePostNewtonian,
+            enableAccretionDisks:     _config.EnableAccretionDisks,
+            enableGravitationalWaves: _config.EnableGravitationalWaves,
+            maxAccretionParticles:    _config.MaxAccretionParticles,
+            enableJets:               _config.EnableJetEmission,
+            jetThreshold:             _config.AccretionJetThreshold,
+            gwObserverDistance:       _config.GravitationalWaveObserverDistance
         );
     }
 
@@ -172,14 +179,21 @@ public class SimulationEngine
         // Verlet re-enables whatever the config requested.
         bool soaCapable = name == "Verlet";
         _solver.ConfigureSoA(
-            enabled:          soaCapable && _config.UseSoAPath,
-            softening:        _config.SofteningEpsilon,
-            deterministic:    _config.DeterministicMode,
-            useParallel:      _config.UseParallelComputation,
-            useBarnesHut:     _config.UseBarnesHut,
-            theta:            _config.Theta,
-            enableCollisions: _config.EnableCollisions,
-            useSimd:          _config.UseSimd
+            enabled:                  soaCapable && _config.UseSoAPath,
+            softening:                _config.SofteningEpsilon,
+            deterministic:            _config.DeterministicMode,
+            useParallel:              _config.UseParallelComputation,
+            useBarnesHut:             _config.UseBarnesHut,
+            theta:                    _config.Theta,
+            enableCollisions:         _config.EnableCollisions,
+            useSimd:                  _config.UseSimd,
+            enablePostNewtonian:      _config.EnablePostNewtonian,
+            enableAccretionDisks:     _config.EnableAccretionDisks,
+            enableGravitationalWaves: _config.EnableGravitationalWaves,
+            maxAccretionParticles:    _config.MaxAccretionParticles,
+            enableJets:               _config.EnableJetEmission,
+            jetThreshold:             _config.AccretionJetThreshold,
+            gwObserverDistance:       _config.GravitationalWaveObserverDistance
         );
     }
 

@@ -84,6 +84,16 @@ public class PhysicsConfig
     public double Theta { get; set; } = 0.5;
 
     /// <summary>
+    /// Alias for <see cref="Theta"/>. Provided for naming consistency with
+    /// <see cref="UseBarnesHut"/>.
+    /// </summary>
+    public double BarnesHutTheta
+    {
+        get => Theta;
+        set => Theta = value;
+    }
+
+    /// <summary>
     /// Softening kernel mode. See <see cref="Types.SofteningMode"/> for details.
     /// Default is <see cref="Types.SofteningMode.Constant"/>.
     /// </summary>
@@ -124,4 +134,52 @@ public class PhysicsConfig
     /// the SIMD-vectorised backend for ~2× throughput improvement.
     /// </summary>
     public bool UseSimd { get; set; } = false;
+
+    // ── Phase 6: Relativistic & High-Energy Physics ──────────────────────────
+
+    /// <summary>
+    /// When true, first Post-Newtonian (1PN) corrections are applied to
+    /// gravitational accelerations. Adds terms proportional to v²/c² and GM/(rc²).
+    /// </summary>
+    public bool EnablePostNewtonian { get; set; } = false;
+
+    /// <summary>
+    /// When true, gravitational lensing post-processing is applied to the render
+    /// pass for black holes. Only affects rendering; no physics impact.
+    /// </summary>
+    public bool EnableGravitationalLensing { get; set; } = false;
+
+    /// <summary>
+    /// When true, accretion disk particle effects are spawned when matter is
+    /// absorbed by a compact object (black hole or neutron star).
+    /// </summary>
+    public bool EnableAccretionDisks { get; set; } = false;
+
+    /// <summary>
+    /// When true, gravitational wave strain is estimated for binary pairs and
+    /// recorded into a waveform buffer each timestep.
+    /// </summary>
+    public bool EnableGravitationalWaves { get; set; } = false;
+
+    /// <summary>
+    /// When true AND <see cref="EnableAccretionDisks"/> is true, relativistic
+    /// jet particles are emitted along the spin axis when the accretion rate
+    /// exceeds <see cref="AccretionJetThreshold"/>.
+    /// </summary>
+    public bool EnableJetEmission { get; set; } = false;
+
+    /// <summary>Maximum number of accretion disk particles per compact object.</summary>
+    public int MaxAccretionParticles { get; set; } = 5000;
+
+    /// <summary>
+    /// Mass accretion rate threshold (in sim units/timestep) above which
+    /// relativistic jets are emitted.
+    /// </summary>
+    public double AccretionJetThreshold { get; set; } = 0.1;
+
+    /// <summary>
+    /// Observer distance from the system centre in simulation units (AU).
+    /// Used for gravitational wave strain calculation: h ∝ 1/d.
+    /// </summary>
+    public double GravitationalWaveObserverDistance { get; set; } = 1000.0;
 }

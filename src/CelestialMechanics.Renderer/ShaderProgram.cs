@@ -90,6 +90,13 @@ public class ShaderProgram : IDisposable
             _gl.Uniform1(location, value);
     }
 
+    public void SetUniform(string name, Vector2 value)
+    {
+        int location = GetUniformLocation(name);
+        if (location >= 0)
+            _gl.Uniform2(location, value.X, value.Y);
+    }
+
     public uint GetAttribLocation(string name) => (uint)_gl.GetAttribLocation(_handle, name);
 
     public void Dispose()

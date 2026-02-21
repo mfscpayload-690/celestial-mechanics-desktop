@@ -19,12 +19,18 @@ public class RenderState
     public int BodyCount { get; set; }
     public float InterpolationAlpha { get; set; }
 
+    // ── Phase 6: Black hole tracking for lensing ──────────────────────────
+    public Vector3[] BlackHolePositions { get; set; } = new Vector3[8];
+    public float[] BlackHoleMasses { get; set; } = new float[8];
+    public int BlackHoleCount { get; set; }
+
     public void UpdateFrom(SimulationEngine engine)
     {
         var physicsBodies = engine.Bodies;
         if (physicsBodies == null || physicsBodies.Length == 0)
         {
             BodyCount = 0;
+            BlackHoleCount = 0;
             return;
         }
 
@@ -32,6 +38,7 @@ public class RenderState
             Bodies = new RenderBody[physicsBodies.Length];
 
         int activeCount = 0;
+        int bhCount = 0;
         float alpha = (float)engine.InterpolationAlpha;
         InterpolationAlpha = alpha;
 
@@ -40,16 +47,27 @@ public class RenderState
             ref var body = ref physicsBodies[i];
             if (!body.IsActive) continue;
 
+            var pos = new Vector3((float)body.Position.X, (float)body.Position.Y, (float)body.Position.Z);
+
             Bodies[activeCount++] = new RenderBody
             {
                 Id = body.Id,
-                Position = new Vector3((float)body.Position.X, (float)body.Position.Y, (float)body.Position.Z),
+                Position = pos,
                 Radius = MathF.Max(0.01f, (float)body.Radius),
                 Color = GetBodyColor(body.Type),
                 BodyType = (int)body.Type
             };
+
+            // Track black holes for lensing (max 8)
+            if (body.Type == BodyType.BlackHole && bhCount < 8)
+            {
+                BlackHolePositions[bhCount] = pos;
+                BlackHoleMasses[bhCount] = (float)body.Mass;
+                bhCount++;
+            }
         }
         BodyCount = activeCount;
+        BlackHoleCount = bhCount;
     }
 
     private static Vector4 GetBodyColor(BodyType type) => type switch

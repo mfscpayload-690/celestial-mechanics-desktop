@@ -1,5 +1,6 @@
 using CelestialMechanics.Math;
 using CelestialMechanics.Physics.Collisions;
+using CelestialMechanics.Physics.Extensions;
 using CelestialMechanics.Physics.Forces;
 using CelestialMechanics.Physics.Integrators;
 using CelestialMechanics.Physics.SoA;
@@ -65,6 +66,18 @@ public class NBodySolver
     private readonly SimdSingleThreadBackend _simdBackend = new();
     private bool _useSimd;
 
+    // ── Post-Newtonian (Phase 6A) ──────────────────────────────────────────
+    private readonly PostNewtonian1Correction _pnCorrection = new();
+    private bool _enablePostNewtonian;
+
+    // ── Accretion Disk (Phase 6C) ─────────────────────────────────────────
+    private AccretionDiskSystem? _accretionDisk;
+    private bool _enableAccretionDisks;
+
+    // ── Gravitational Waves (Phase 6D) ───────────────────────────────────
+    private GravitationalWaveAnalyzer? _gwAnalyzer;
+    private bool _enableGravitationalWaves;
+
     // ── Shared ─────────────────────────────────────────────────────────────────
     private readonly EnergyCalculator _energy = new();
     public IIntegrator CurrentIntegrator => _integrator;
@@ -84,9 +97,12 @@ public class NBodySolver
         _deterministicMode = true;
         _useParallel       = false;
         _useBarnesHut      = false;
-        _enableCollisions  = false;
-        _useSimd           = false;
-        _softening         = 1e-4;
+        _enableCollisions    = false;
+        _useSimd             = false;
+        _enablePostNewtonian = false;
+        _enableAccretionDisks = false;
+        _enableGravitationalWaves = false;
+        _softening           = 1e-4;
 
         _currentTime      = 0.0;
         _initialEnergy    = 0.0;
@@ -130,16 +146,50 @@ public class NBodySolver
     public void ConfigureSoA(bool enabled, double softening,
                              bool deterministic = true, bool useParallel = false,
                              bool useBarnesHut = false, double theta = 0.5,
-                             bool enableCollisions = false, bool useSimd = false)
+                             bool enableCollisions = false, bool useSimd = false,
+                             bool enablePostNewtonian = false,
+                             bool enableAccretionDisks = false,
+                             bool enableGravitationalWaves = false,
+                             int maxAccretionParticles = 5000,
+                             bool enableJets = false,
+                             double jetThreshold = 0.1,
+                             double gwObserverDistance = 1000.0)
     {
-        _useSoA            = enabled;
-        _softening         = softening;
-        _deterministicMode = deterministic;
-        _useParallel       = useParallel;
-        _useBarnesHut      = useBarnesHut;
-        _theta             = theta;
-        _enableCollisions  = enableCollisions;
-        _useSimd           = useSimd;
+        _useSoA                   = enabled;
+        _softening                = softening;
+        _deterministicMode        = deterministic;
+        _useParallel              = useParallel;
+        _useBarnesHut             = useBarnesHut;
+        _theta                    = theta;
+        _enableCollisions         = enableCollisions;
+        _useSimd                  = useSimd;
+        _enablePostNewtonian      = enablePostNewtonian;
+        _enableAccretionDisks     = enableAccretionDisks;
+        _enableGravitationalWaves = enableGravitationalWaves;
+
+        // Lazily create accretion disk system
+        if (enableAccretionDisks && _accretionDisk == null)
+        {
+            _accretionDisk = new AccretionDiskSystem(maxAccretionParticles);
+            _accretionDisk.EnableJets = enableJets;
+            _accretionDisk.JetThreshold = jetThreshold;
+        }
+        else if (_accretionDisk != null)
+        {
+            _accretionDisk.EnableJets = enableJets;
+            _accretionDisk.JetThreshold = jetThreshold;
+        }
+
+        // Lazily create GW analyzer
+        if (enableGravitationalWaves && _gwAnalyzer == null)
+        {
+            _gwAnalyzer = new GravitationalWaveAnalyzer();
+            _gwAnalyzer.ObserverDistance = gwObserverDistance;
+        }
+        else if (_gwAnalyzer != null)
+        {
+            _gwAnalyzer.ObserverDistance = gwObserverDistance;
+        }
 
         // Lazily create Barnes-Hut backends only when needed
         if (useBarnesHut)
@@ -239,7 +289,15 @@ public class NBodySolver
                 _collisionResolver.Resolve(events, _soaBodies, bodies);
         }
 
+        // ── Accretion disk update (Phase 6C) ───────────────────────────────
+        if (_enableAccretionDisks && _accretionDisk != null)
+            _accretionDisk.Update(_soaBodies, dt, _currentTime);
+
         _soaBodies.CopyTo(bodies);
+
+        // ── Gravitational wave sampling (Phase 6D) ─────────────────────────
+        if (_enableGravitationalWaves && _gwAnalyzer != null)
+            _gwAnalyzer.Sample(_soaBodies, _currentTime, dt);
     }
 
     private void StepAoS(PhysicsBody[] bodies, double dt)
@@ -258,23 +316,34 @@ public class NBodySolver
     /// </summary>
     private IPhysicsComputeBackend SelectBackend()
     {
+        IPhysicsComputeBackend backend;
+
         if (_useBarnesHut)
         {
             // Deterministic mode trumps parallel flag
             if (_deterministicMode)
-                return _barnesHutSingleBackend!;
-
-            return _useParallel ? _barnesHutParallelBackend! : _barnesHutSingleBackend!;
+                backend = _barnesHutSingleBackend!;
+            else
+                backend = _useParallel ? _barnesHutParallelBackend! : _barnesHutSingleBackend!;
+        }
+        else if (_useSimd)
+        {
+            backend = _simdBackend;
+        }
+        else if (_deterministicMode)
+        {
+            backend = _singleThreadBackend;
+        }
+        else
+        {
+            backend = _useParallel ? _parallelBackend : _singleThreadBackend;
         }
 
-        // Original brute-force selection
-        if (_useSimd)
-            return _simdBackend;
+        // Wrap with Post-Newtonian corrections if enabled (Phase 6A)
+        if (_enablePostNewtonian)
+            return new PostNewtonianBackend(backend, _pnCorrection);
 
-        if (_deterministicMode)
-            return _singleThreadBackend;
-
-        return _useParallel ? _parallelBackend : _singleThreadBackend;
+        return backend;
     }
 
     private IForceCalculator[] GetForcesCache()

@@ -23,10 +23,21 @@ public sealed class BenchmarkResult
     public double EnergyDrift       { get; init; }
     public long MemoryBytes         { get; init; }
 
-    public override string ToString() =>
-        $"{BackendName,-22} | n={BodyCount,5} | {MsPerStep,8:F3} ms/step | " +
-        $"{StepsPerSecond,8:F0} steps/s | drift={EnergyDrift:E3} | " +
-        $"mem={MemoryBytes / 1024.0:F0} KB";
+    /// <summary>Average tree build time per step (ms). Zero for non-BH backends.</summary>
+    public double BuildTimeMs       { get; init; }
+
+    /// <summary>Average tree traversal time per step (ms). Zero for non-BH backends.</summary>
+    public double TraversalTimeMs   { get; init; }
+
+    public override string ToString()
+    {
+        string timing = BuildTimeMs > 0
+            ? $" | build={BuildTimeMs:F3} trav={TraversalTimeMs:F3}"
+            : "";
+        return $"{BackendName,-22} | n={BodyCount,5} | {MsPerStep,8:F3} ms/step | " +
+               $"{StepsPerSecond,8:F0} steps/s | drift={EnergyDrift:E3} | " +
+               $"mem={MemoryBytes / 1024.0:F0} KB{timing}";
+    }
 }
 
 /// <summary>
@@ -66,7 +77,7 @@ public sealed class BenchmarkResult
 public sealed class PhysicsBenchmark
 {
     /// <summary>Standard body counts used by <see cref="RunAll"/>.</summary>
-    public static readonly IReadOnlyList<int> DefaultBodyCounts = new[] { 100, 1000, 5000, 10000, 20000 };
+    public static readonly IReadOnlyList<int> DefaultBodyCounts = new[] { 100, 1000, 5000, 10000, 20000, 50000 };
 
     /// <summary>Number of physics steps per benchmark run.</summary>
     public const int DefaultSteps = 10_000;
@@ -209,6 +220,21 @@ public sealed class PhysicsBenchmark
         double totalMs   = sw.Elapsed.TotalMilliseconds;
         double msPerStep = totalMs / steps;
 
+        // Capture BH timing breakdown from a final step (last-step timing).
+        // This gives a representative single-step build/traversal split.
+        BarnesHutBackend? bhBackend = null;
+        if (mode == BackendMode.BarnesHutSingle || mode == BackendMode.BarnesHutParallel)
+        {
+            bhBackend = new BarnesHutBackend
+            {
+                Theta = 0.5,
+                UseParallel = mode == BackendMode.BarnesHutParallel
+            };
+            var timingSoa = new BodySoA(bodies.Length + 16);
+            timingSoa.CopyFrom(bodies);
+            bhBackend.ComputeForces(timingSoa, 1e-4);
+        }
+
         return new BenchmarkResult
         {
             BodyCount      = bodyCount,
@@ -218,7 +244,9 @@ public sealed class PhysicsBenchmark
             MsPerStep      = msPerStep,
             StepsPerSecond = 1000.0 / msPerStep,
             EnergyDrift    = state is null ? double.NaN : System.Math.Abs(state.EnergyDrift),
-            MemoryBytes    = memUsed
+            MemoryBytes    = memUsed,
+            BuildTimeMs    = bhBackend?.LastBuildTimeMs ?? 0,
+            TraversalTimeMs = bhBackend?.LastTraversalTimeMs ?? 0
         };
     }
 

@@ -28,4 +28,33 @@ public static class PhysicalConstants
 
     /// <summary>Schwarzschild factor: 2 * G_SI / c^2.</summary>
     public const double SchwarzschildFactor = 2.0 * G_SI / (C * C);
+
+    // ── Phase 6: Relativistic constants in simulation units ───────────────────
+
+    /// <summary>
+    /// Speed of light in simulation units (AU / TimeUnit).
+    /// C_Sim = C_SI × TimeUnit / AU ≈ 10065.3
+    /// </summary>
+    public const double C_Sim = C * TimeUnit / AU;
+
+    /// <summary>c² in simulation units.</summary>
+    public const double C_Sim2 = C_Sim * C_Sim;
+
+    /// <summary>c⁴ in simulation units (used in gravitational wave strain formula).</summary>
+    public const double C_Sim4 = C_Sim2 * C_Sim2;
+
+    /// <summary>c⁵ in simulation units (used in GW energy loss rate).</summary>
+    public const double C_Sim5 = C_Sim4 * C_Sim;
+
+    /// <summary>
+    /// Schwarzschild radius in simulation units: Rs = 2·G·M / c² = 2·M / c²_sim
+    /// (since G_Sim = 1). For M = 1 M☉, Rs ≈ 1.97e-8 AU.
+    /// </summary>
+    public const double SchwarzschildFactorSim = 2.0 * G_Sim / C_Sim2;
+
+    /// <summary>
+    /// Radiative accretion efficiency η. Fraction of rest-mass energy
+    /// converted to luminosity. Typical value for Schwarzschild BH: 0.057.
+    /// </summary>
+    public const double AccretionEfficiency = 0.057;
 }

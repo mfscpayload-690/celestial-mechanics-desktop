@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CelestialMechanics.Physics.BarnesHut;
 using CelestialMechanics.Physics.SoA;
 
@@ -84,10 +85,30 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
     /// </summary>
     public double MinNodeSize { get; set; } = 1e-12;
 
+    /// <summary>
+    /// Optional multipole expansion for higher-order force approximation.
+    /// When null, only the monopole (point-mass) approximation is used.
+    /// Set this to a quadrupole implementation for O(s/d)⁴ accuracy.
+    /// </summary>
+    public IMultipoleExpansion? MultipoleExpansion { get; set; }
+
+    // ── Timing instrumentation ────────────────────────────────────────────────
+    // Updated after each ComputeForces call. Zero if never called.
+
+    /// <summary>Time spent building the octree in the last step (ms).</summary>
+    public double LastBuildTimeMs { get; private set; }
+
+    /// <summary>Time spent traversing the tree for force computation (ms).</summary>
+    public double LastTraversalTimeMs { get; private set; }
+
+    /// <summary>Total time for the last ComputeForces call (ms).</summary>
+    public double LastTotalTimeMs { get; private set; }
+
     // ── Reusable state ────────────────────────────────────────────────────────
     // These are allocated once and reused across simulation steps.
 
     private OctreePool? _pool;
+    private readonly Stopwatch _sw = new();
 
     // ── IPhysicsComputeBackend implementation ─────────────────────────────────
 
@@ -97,8 +118,14 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
         int n = bodies.Count;
         if (n == 0) return;
 
+        _sw.Restart();
+
         double eps2 = softening * softening;
-        double theta2 = Theta * Theta; // pre-square for comparison: (s/d)² < θ²
+        // Clamp θ lower bound at 0.2 to prevent near-exact (expensive) traversal.
+        // θ=0.2 is already extremely accurate (~0.001% error) and avoids
+        // degenerate O(n²) behaviour that defeats the purpose of the tree.
+        double effectiveTheta = System.Math.Max(Theta, 0.2);
+        double theta2 = effectiveTheta * effectiveTheta;
 
         // ── Preload array references ──────────────────────────────────────────
         double[] px  = bodies.PosX;
@@ -160,6 +187,9 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
             InsertBody(_pool, root, i, px[i], py[i], pz[i], m[i]);
         }
 
+        LastBuildTimeMs = _sw.Elapsed.TotalMilliseconds;
+        _sw.Restart();
+
         // ── Step 4: Force traversal ───────────────────────────────────────────
         OctreeNode[] nodes = _pool.Nodes;
 
@@ -195,6 +225,9 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
                 az[i] = azi;
             }
         }
+
+        LastTraversalTimeMs = _sw.Elapsed.TotalMilliseconds;
+        LastTotalTimeMs = LastBuildTimeMs + LastTraversalTimeMs;
     }
 
     // ── Tree construction ─────────────────────────────────────────────────────
