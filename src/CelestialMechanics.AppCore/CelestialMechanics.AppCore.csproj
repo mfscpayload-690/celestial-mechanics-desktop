@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <RootNamespace>CelestialMechanics.AppCore</RootNamespace>
+    <AssemblyName>CelestialMechanics.AppCore</AssemblyName>
+    <Description>Application Core Layer — scene graph, serialization, modes, selection, and snapshots. No UI dependencies.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CelestialMechanics.Math\CelestialMechanics.Math.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Physics\CelestialMechanics.Physics.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Simulation\CelestialMechanics.Simulation.csproj" />
+  </ItemGroup>
+
+</Project>

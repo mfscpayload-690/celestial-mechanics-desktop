@@ -17,11 +17,17 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Data", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.App", "src\CelestialMechanics.App\CelestialMechanics.App.csproj", "{DDED945C-DF97-4C13-B413-9E52ABC9B8D1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.AppCore", "src\CelestialMechanics.AppCore\CelestialMechanics.AppCore.csproj", "{B1C2D3E4-F5A6-7890-BCDE-F12345678901}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{C349DE58-F0BC-4D14-9959-93B155084097}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Math.Tests", "tests\CelestialMechanics.Math.Tests\CelestialMechanics.Math.Tests.csproj", "{747E5D58-F30A-4126-B47B-E3638E3F9BD8}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Physics.Tests", "tests\CelestialMechanics.Physics.Tests\CelestialMechanics.Physics.Tests.csproj", "{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.Simulation.Tests", "tests\CelestialMechanics.Simulation.Tests\CelestialMechanics.Simulation.Tests.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CelestialMechanics.AppCore.Tests", "tests\CelestialMechanics.AppCore.Tests\CelestialMechanics.AppCore.Tests.csproj", "{C2D3E4F5-A6B7-8901-CDEF-123456789012}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -64,6 +70,18 @@ Global
 		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B1C2D3E4-F5A6-7890-BCDE-F12345678901}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B1C2D3E4-F5A6-7890-BCDE-F12345678901}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B1C2D3E4-F5A6-7890-BCDE-F12345678901}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B1C2D3E4-F5A6-7890-BCDE-F12345678901}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2D3E4F5-A6B7-8901-CDEF-123456789012}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2D3E4F5-A6B7-8901-CDEF-123456789012}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2D3E4F5-A6B7-8901-CDEF-123456789012}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2D3E4F5-A6B7-8901-CDEF-123456789012}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{9BD9D86A-D0EC-4FF5-8CDF-35204BCC4673} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
@@ -74,5 +92,8 @@ Global
 		{DDED945C-DF97-4C13-B413-9E52ABC9B8D1} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
 		{747E5D58-F30A-4126-B47B-E3638E3F9BD8} = {C349DE58-F0BC-4D14-9959-93B155084097}
 		{F901DCF9-EBA1-498C-A324-EB8AC7C4BEE8} = {C349DE58-F0BC-4D14-9959-93B155084097}
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890} = {C349DE58-F0BC-4D14-9959-93B155084097}
+		{B1C2D3E4-F5A6-7890-BCDE-F12345678901} = {5A8FB137-973F-42CB-959B-9559AFAC8641}
+		{C2D3E4F5-A6B7-8901-CDEF-123456789012} = {C349DE58-F0BC-4D14-9959-93B155084097}
 	EndGlobalSection
 EndGlobal
