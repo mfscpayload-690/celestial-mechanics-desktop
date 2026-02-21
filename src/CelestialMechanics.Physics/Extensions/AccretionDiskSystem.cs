@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using CelestialMechanics.Math;
+using CelestialMechanics.Physics.Types;
 using CelestialMechanics.Physics.SoA;
 
 namespace CelestialMechanics.Physics.Extensions;
@@ -80,13 +83,6 @@ public sealed class AccretionDiskSystem : IAccretionModel
     /// Notify the system that a body was absorbed by a compact object.
     /// Spawns disk particles and updates accretion rate.
     /// </summary>
-    /// <param name="compactBodyIndex">Index of the absorbing compact object.</param>
-    /// <param name="absorbedMass">Mass of the absorbed body.</param>
-    /// <param name="compactPos">Position of the compact object.</param>
-    /// <param name="absorbedPos">Position of the absorbed body at impact.</param>
-    /// <param name="absorbedVel">Velocity of the absorbed body relative to compact.</param>
-    /// <param name="dt">Current timestep.</param>
-    /// <param name="time">Current simulation time.</param>
     public void OnMatterAbsorbed(
         int compactBodyIndex, double absorbedMass,
         double cpx, double cpy, double cpz,
@@ -168,8 +164,6 @@ public sealed class AccretionDiskSystem : IAccretionModel
             double r = innerRadius + t * (outerRadius - innerRadius);
             double angle = _rng.NextDouble() * 2.0 * System.Math.PI;
 
-            // Construct position in the disk plane (perpendicular to spin axis)
-            // Use Gram-Schmidt to get two orthonormal vectors in the disk plane
             GetDiskPlaneVectors(state.SpinAxisX, state.SpinAxisY, state.SpinAxisZ,
                 out double e1x, out double e1y, out double e1z,
                 out double e2x, out double e2y, out double e2z);
@@ -188,12 +182,12 @@ public sealed class AccretionDiskSystem : IAccretionModel
             p.VelY = vCirc * (-sinA * e1y + cosA * e2y);
             p.VelZ = vCirc * (-sinA * e1z + cosA * e2z);
 
-            // Temperature: T ∝ r^(-3/4) (Shakura-Sunyaev profile)
+            // Temperature: T ∝ r^(-3/4)
             double rNorm = r / System.Math.Max(innerRadius, 1e-10);
             p.Temperature = 1e6 * System.Math.Pow(rNorm, -0.75);
 
             p.Age = 0.0;
-            p.MaxAge = 5.0 + _rng.NextDouble() * 10.0; // 5–15 sim time units
+            p.MaxAge = 5.0 + _rng.NextDouble() * 10.0;
             p.ParentBodyIndex = parentIndex;
             p.IsActive = true;
             p.OrbitalRadius = r;
@@ -201,21 +195,56 @@ public sealed class AccretionDiskSystem : IAccretionModel
     }
 
     /// <summary>
-    /// Update all active disk particles: drift inward, age, update temperature.
-    /// Called once per timestep, separate from the N-body loop.
+    /// Update all active disk particles using SoA data.
     /// </summary>
-    /// <param name="bodies">Current body state (for parent body positions).</param>
-    /// <param name="dt">Current timestep.</param>
-    /// <param name="time">Current simulation time.</param>
     public void Update(BodySoA bodies, double dt, double time)
     {
-        double[] px = bodies.PosX, py = bodies.PosY, pz = bodies.PosZ;
-        double[] m = bodies.Mass;
-        bool[] act = bodies.IsActive;
+        UpdateInternal(bodies.PosX, bodies.PosY, bodies.PosZ, bodies.Mass, bodies.IsActive, bodies.Count, dt, time);
+    }
 
+    /// <summary>
+    /// Update all active disk particles using AoS data.
+    /// </summary>
+    public void Update(PhysicsBody[] bodies, double dt, double time)
+    {
+        int n = bodies.Length;
         _activeCount = 0;
 
-        // Decay accretion rates
+        DecayAccretionRates(time);
+
+        for (int i = 0; i < _particles.Length; i++)
+        {
+            ref var p = ref _particles[i];
+            if (!p.IsActive) continue;
+
+            int pi = p.ParentBodyIndex;
+            if (pi >= n || !bodies[pi].IsActive)
+            {
+                p.IsActive = false;
+                continue;
+            }
+
+            UpdateParticle(ref p, bodies[pi].Position.X, bodies[pi].Position.Y, bodies[pi].Position.Z, bodies[pi].Mass, dt);
+        }
+
+        if (EnableJets)
+        {
+            foreach (var kvp in _accretionStates)
+            {
+                if (kvp.Value.AccretionRate > JetThreshold)
+                {
+                    int pi = kvp.Key;
+                    if (pi < n && bodies[pi].IsActive)
+                    {
+                        SpawnJetParticles(pi, bodies[pi].Position.X, bodies[pi].Position.Y, bodies[pi].Position.Z, kvp.Value, dt);
+                    }
+                }
+            }
+        }
+    }
+
+    private void DecayAccretionRates(double time)
+    {
         foreach (var kvp in _accretionStates)
         {
             var state = kvp.Value;
@@ -226,80 +255,28 @@ public sealed class AccretionDiskSystem : IAccretionModel
                     System.Math.Exp(-elapsed / AccretionDecayTimescale);
             }
         }
+    }
+
+    private void UpdateInternal(double[] px, double[] py, double[] pz, double[] m, bool[] act, int count, double dt, double time)
+    {
+        _activeCount = 0;
+        DecayAccretionRates(time);
 
         for (int i = 0; i < _particles.Length; i++)
         {
             ref var p = ref _particles[i];
             if (!p.IsActive) continue;
 
-            // Check if parent is still active
             int pi = p.ParentBodyIndex;
-            if (pi >= bodies.Count || !act[pi])
+            if (pi >= count || !act[pi])
             {
                 p.IsActive = false;
                 continue;
             }
 
-            p.Age += dt;
-            if (p.Age >= p.MaxAge)
-            {
-                p.IsActive = false;
-                continue;
-            }
-
-            // Vector from particle to parent
-            double dx = px[pi] - p.PosX;
-            double dy = py[pi] - p.PosY;
-            double dz = pz[pi] - p.PosZ;
-            double dist = System.Math.Sqrt(dx * dx + dy * dy + dz * dz);
-
-            if (dist < 1e-10)
-            {
-                p.IsActive = false;
-                continue;
-            }
-
-            double invDist = 1.0 / dist;
-
-            // Gravity from parent body
-            double acc = PhysicalConstants.G_Sim * m[pi] * invDist * invDist;
-
-            // Add gravitational acceleration toward parent
-            double nx = dx * invDist, ny = dy * invDist, nz = dz * invDist;
-            p.VelX += acc * nx * dt;
-            p.VelY += acc * ny * dt;
-            p.VelZ += acc * nz * dt;
-
-            // Radial inward drift (viscous dissipation)
-            double driftFactor = 0.001; // Small viscous coupling
-            p.VelX += driftFactor * nx * dt;
-            p.VelY += driftFactor * ny * dt;
-            p.VelZ += driftFactor * nz * dt;
-
-            // Update position
-            p.PosX += p.VelX * dt;
-            p.PosY += p.VelY * dt;
-            p.PosZ += p.VelZ * dt;
-
-            // Update orbital radius
-            p.OrbitalRadius = dist;
-
-            // Update temperature based on radius (T ∝ r^(-3/4))
-            double rs = PhysicalConstants.SchwarzschildFactorSim * m[pi];
-            double rNorm = dist / System.Math.Max(rs * 3.0, 1e-10); // normalize to ISCO
-            p.Temperature = 1e6 * System.Math.Pow(System.Math.Max(rNorm, 0.1), -0.75);
-
-            // Remove if fallen past event horizon
-            if (dist < rs)
-            {
-                p.IsActive = false;
-                continue;
-            }
-
-            _activeCount++;
+            UpdateParticle(ref p, px[pi], py[pi], pz[pi], m[pi], dt);
         }
 
-        // Spawn jet particles if enabled and accretion rate is high enough
         if (EnableJets)
         {
             foreach (var kvp in _accretionStates)
@@ -307,7 +284,7 @@ public sealed class AccretionDiskSystem : IAccretionModel
                 if (kvp.Value.AccretionRate > JetThreshold)
                 {
                     int pi = kvp.Key;
-                    if (pi < bodies.Count && act[pi])
+                    if (pi < count && act[pi])
                     {
                         SpawnJetParticles(pi, px[pi], py[pi], pz[pi], kvp.Value, dt);
                     }
@@ -316,17 +293,68 @@ public sealed class AccretionDiskSystem : IAccretionModel
         }
     }
 
+    private void UpdateParticle(ref DiskParticle p, double parentX, double parentY, double parentZ, double parentMass, double dt)
+    {
+        p.Age += dt;
+        if (p.Age >= p.MaxAge)
+        {
+            p.IsActive = false;
+            return;
+        }
+
+        double dx = parentX - p.PosX;
+        double dy = parentY - p.PosY;
+        double dz = parentZ - p.PosZ;
+        double dist = System.Math.Sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (dist < 1e-10)
+        {
+            p.IsActive = false;
+            return;
+        }
+
+        double invDist = 1.0 / dist;
+        double acc = PhysicalConstants.G_Sim * parentMass * invDist * invDist;
+
+        double nx = dx * invDist, ny = dy * invDist, nz = dz * invDist;
+        p.VelX += acc * nx * dt;
+        p.VelY += acc * ny * dt;
+        p.VelZ += acc * nz * dt;
+
+        double driftFactor = 0.001;
+        p.VelX += driftFactor * nx * dt;
+        p.VelY += driftFactor * ny * dt;
+        p.VelZ += driftFactor * nz * dt;
+
+        p.PosX += p.VelX * dt;
+        p.PosY += p.VelY * dt;
+        p.PosZ += p.VelZ * dt;
+
+        p.OrbitalRadius = dist;
+
+        double rs = PhysicalConstants.SchwarzschildFactorSim * parentMass;
+        double rNorm = dist / System.Math.Max(rs * 3.0, 1e-10);
+        p.Temperature = 1e6 * System.Math.Pow(System.Math.Max(rNorm, 0.1), -0.75);
+
+        if (dist < rs)
+        {
+            p.IsActive = false;
+            return;
+        }
+
+        _activeCount++;
+    }
+
     private void SpawnJetParticles(int parentIndex, double cx, double cy, double cz,
         AccretionState state, double dt)
     {
-        // Spawn 2 particles per step along spin axis (bipolar jet)
         for (int sign = -1; sign <= 1; sign += 2)
         {
             int slot = FindFreeSlot();
             if (slot < 0) return;
 
-            double jetSpeed = PhysicalConstants.C_Sim * 0.1; // 10% c
-            double offset = 0.01; // Small offset from centre
+            double jetSpeed = PhysicalConstants.C_Sim * 0.1;
+            double offset = 0.01;
 
             ref var p = ref _particles[slot];
             p.PosX = cx + sign * state.SpinAxisX * offset;
@@ -335,9 +363,9 @@ public sealed class AccretionDiskSystem : IAccretionModel
             p.VelX = sign * state.SpinAxisX * jetSpeed;
             p.VelY = sign * state.SpinAxisY * jetSpeed;
             p.VelZ = sign * state.SpinAxisZ * jetSpeed;
-            p.Temperature = 5e7; // Very hot (X-ray)
+            p.Temperature = 5e7;
             p.Age = 0.0;
-            p.MaxAge = 2.0; // Short-lived
+            p.MaxAge = 2.0;
             p.ParentBodyIndex = parentIndex;
             p.IsActive = true;
             p.OrbitalRadius = 0.0;
@@ -350,7 +378,7 @@ public sealed class AccretionDiskSystem : IAccretionModel
         {
             if (!_particles[i].IsActive) return i;
         }
-        return -1; // All slots occupied
+        return -1;
     }
 
     private static void GetDiskPlaneVectors(
@@ -358,7 +386,6 @@ public sealed class AccretionDiskSystem : IAccretionModel
         out double e1x, out double e1y, out double e1z,
         out double e2x, out double e2y, out double e2z)
     {
-        // Find a vector not parallel to spin axis
         double ax, ay, az;
         if (System.Math.Abs(sx) < 0.9)
         {
@@ -369,14 +396,12 @@ public sealed class AccretionDiskSystem : IAccretionModel
             ax = 0; ay = 1; az = 0;
         }
 
-        // e1 = normalize(a × spin)
         e1x = ay * sz - az * sy;
         e1y = az * sx - ax * sz;
         e1z = ax * sy - ay * sx;
         double mag = System.Math.Sqrt(e1x * e1x + e1y * e1y + e1z * e1z);
         if (mag > 1e-15) { e1x /= mag; e1y /= mag; e1z /= mag; }
 
-        // e2 = spin × e1
         e2x = sy * e1z - sz * e1y;
         e2y = sz * e1x - sx * e1z;
         e2z = sx * e1y - sy * e1x;
@@ -384,7 +409,6 @@ public sealed class AccretionDiskSystem : IAccretionModel
         if (mag > 1e-15) { e2x /= mag; e2y /= mag; e2z /= mag; }
     }
 
-    /// <summary>Reset all particles and accretion states.</summary>
     public void Reset()
     {
         for (int i = 0; i < _particles.Length; i++)

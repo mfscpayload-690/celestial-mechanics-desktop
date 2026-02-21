@@ -235,6 +235,10 @@ public class NBodySolver
         else
             StepAoS(bodies, dt);
 
+        // ── Accretion disk update (Phase 6C) ───────────────────────────────
+        if (_enableAccretionDisks && _accretionDisk != null)
+            _accretionDisk.Update(bodies, dt, _currentTime);
+
         _currentTime += dt;
 
         IForceCalculator[] fc = GetForcesCache();
@@ -288,10 +292,6 @@ public class NBodySolver
             if (events.Count > 0)
                 _collisionResolver.Resolve(events, _soaBodies, bodies);
         }
-
-        // ── Accretion disk update (Phase 6C) ───────────────────────────────
-        if (_enableAccretionDisks && _accretionDisk != null)
-            _accretionDisk.Update(_soaBodies, dt, _currentTime);
 
         _soaBodies.CopyTo(bodies);
 
