@@ -153,6 +153,36 @@ void ParticleSystem::clear() {
     std::memset(body_type_index, 0, i32size);
 }
 
+i32 ParticleSystem::compact() {
+    i32 write = 0;
+    for (i32 read = 0; read < count; read++) {
+        if (!is_active[read]) continue;
+        if (write != read) {
+            pos_x[write] = pos_x[read];
+            pos_y[write] = pos_y[read];
+            pos_z[write] = pos_z[read];
+            vel_x[write] = vel_x[read];
+            vel_y[write] = vel_y[read];
+            vel_z[write] = vel_z[read];
+            acc_x[write] = acc_x[read];
+            acc_y[write] = acc_y[read];
+            acc_z[write] = acc_z[read];
+            old_acc_x[write] = old_acc_x[read];
+            old_acc_y[write] = old_acc_y[read];
+            old_acc_z[write] = old_acc_z[read];
+            mass[write] = mass[read];
+            radius[write] = radius[read];
+            if (density) density[write] = density[read];
+            is_active[write] = is_active[read];
+            if (is_collidable) is_collidable[write] = is_collidable[read];
+            if (body_type_index) body_type_index[write] = body_type_index[read];
+        }
+        write++;
+    }
+    count = write;
+    return write;
+}
+
 ParticleSystem::ParticleSystem(ParticleSystem&& other) noexcept
     : pos_x(other.pos_x), pos_y(other.pos_y), pos_z(other.pos_z)
     , vel_x(other.vel_x), vel_y(other.vel_y), vel_z(other.vel_z)

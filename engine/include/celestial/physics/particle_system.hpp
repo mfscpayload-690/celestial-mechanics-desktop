@@ -60,6 +60,10 @@ struct CELESTIAL_API ParticleSystem {
     /// Zero all arrays.
     void clear();
 
+    /// Compact: shift all active bodies to front, remove inactive gaps.
+    /// Returns new count (number of active bodies). Updates count field.
+    i32 compact();
+
     ~ParticleSystem() { free(); }
 
     // Move-only
