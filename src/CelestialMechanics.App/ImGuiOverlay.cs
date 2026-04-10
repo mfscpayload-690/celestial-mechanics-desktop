@@ -2,6 +2,9 @@ using ImGuiNET;
 using CelestialMechanics.Simulation;
 using CelestialMechanics.Renderer;
 using CelestialMechanics.Physics.Types;
+using CelestialMechanics.Math;
+using CelestialMechanics.Simulation.Placement;
+using CelestialMechanics.Data;
 using System.Numerics;
 
 namespace CelestialMechanics.App;
@@ -19,15 +22,20 @@ public class ImGuiOverlay
     private double _initialEnergy = double.NaN;
 
     // Add body state
+    private int _selectedCategory;
     private int _selectedTemplate;
     private Vector3 _newBodyPos = Vector3.Zero;
     private Vector3 _newBodyVel = Vector3.Zero;
     private float _newBodyMass = 1.0f;
     private int _nextBodyId = 10;
-    private readonly string[] _templateNames = { "Star", "Planet", "Gas Giant", "Moon", "Asteroid", "Comet" };
-    private readonly BodyType[] _templateTypes = { BodyType.Star, BodyType.Planet, BodyType.GasGiant, BodyType.Moon, BodyType.Asteroid, BodyType.Comet };
-    private readonly float[] _templateMasses = { 1.0f, 0.001f, 0.01f, 0.00001f, 0.0000001f, 0.00000001f };
-    private readonly float[] _templateRadii = { 0.05f, 0.02f, 0.035f, 0.008f, 0.003f, 0.002f };
+    private readonly IReadOnlyList<CelestialObjectCategory> _catalog = CelestialCatalog.Categories;
+    private bool _interactivePlacementEnabled;
+    private readonly PlacementStateMachine _placement = new();
+
+    // Placement velocity tuning
+    private float _directionSpeedScale = 0.8f;
+    private float _directionMinSpeed = 0.0f;
+    private float _directionMaxSpeed = 4.0f;
 
     // Body inspector
     private int _selectedBodyIndex = -1;
@@ -62,6 +70,57 @@ public class ImGuiOverlay
         style.Colors[(int)ImGuiCol.PlotHistogram] = new Vector4(0.40f, 0.70f, 1.0f, 1.0f);
     }
 
+    public PlacementStateMachine PlacementStateMachine => _placement;
+    public bool InteractivePlacementEnabled => _interactivePlacementEnabled;
+    public string SelectedCategoryName => _catalog.Count == 0 ? string.Empty : _catalog[_selectedCategory].Name;
+    public BodyTemplate? SelectedTemplate
+    {
+        get
+        {
+            var templates = GetSelectedTemplates();
+            if (templates.Count == 0)
+                return null;
+
+            _selectedTemplate = System.Math.Clamp(_selectedTemplate, 0, templates.Count - 1);
+            return templates[_selectedTemplate];
+        }
+    }
+
+    public double DirectionSpeedScale => _directionSpeedScale;
+    public double DirectionMinSpeed => _directionMinSpeed;
+    public double DirectionMaxSpeed => _directionMaxSpeed;
+
+    public void SetInteractivePlacement(bool enabled)
+    {
+        _interactivePlacementEnabled = enabled;
+    }
+
+    public bool TrySpawnTemplateAt(int id, Vec3d position, Vec3d velocity, out PhysicsBody body)
+    {
+        body = default;
+        var template = SelectedTemplate;
+        if (template == null)
+            return false;
+
+        if (!Enum.TryParse<BodyType>(template.BodyType, ignoreCase: true, out var parsedType))
+            parsedType = BodyType.Custom;
+
+        body = new PhysicsBody(id, template.Mass, position, velocity, parsedType)
+        {
+            Radius = template.Radius,
+            GravityStrength = template.GravityStrength,
+            GravityRange = template.GravityRange,
+            IsActive = true
+        };
+
+        return true;
+    }
+
+    public int ReserveBodyId()
+    {
+        return _nextBodyId++;
+    }
+
     public void Render(double physicsMs, double renderMs, int bodyCount)
     {
         RenderSimulationControls();
@@ -75,7 +134,7 @@ public class ImGuiOverlay
     private void RenderSimulationControls()
     {
         ImGui.SetNextWindowPos(new Vector2(10, 10), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSize(new Vector2(250, 140), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(320, 520), ImGuiCond.FirstUseEver);
         ImGui.Begin("Simulation Controls");
 
         string stateText = _engine.State.ToString();
@@ -103,6 +162,86 @@ public class ImGuiOverlay
         ImGui.Separator();
         ImGui.Text($"Sim Time: {_engine.CurrentTime:F4}");
         ImGui.Text($"Time Step (dt): {_engine.Config.TimeStep:E2}");
+        ImGui.Text($"Effective dt: {_engine.CurrentState.CurrentDt:E2}");
+
+        bool trails = _renderer.ShowOrbitalTrails;
+        if (ImGui.Checkbox("Orbital Trails", ref trails))
+            _renderer.ShowOrbitalTrails = trails;
+
+        bool accretionDisks = _renderer.ShowAccretionDisks;
+        if (ImGui.Checkbox("Accretion Disks", ref accretionDisks))
+            _renderer.ShowAccretionDisks = accretionDisks;
+
+        bool background = _renderer.ShowBackground;
+        if (ImGui.Checkbox("Space Background", ref background))
+            _renderer.ShowBackground = background;
+
+        int trailPoints = _renderer.MaxTrailPoints;
+        if (ImGui.SliderInt("Trail Length", ref trailPoints, 8, 120))
+            _renderer.MaxTrailPoints = trailPoints;
+
+        float trailSpacing = _renderer.TrailMinDistance;
+        if (ImGui.SliderFloat("Trail Spacing", ref trailSpacing, 0.0005f, 0.05f, "%.4f"))
+            _renderer.TrailMinDistance = trailSpacing;
+
+        ImGui.Separator();
+        ImGui.Text("Visual Tuning");
+
+        float glow = _renderer.GlobalGlowScale;
+        if (ImGui.SliderFloat("Glow Scale", ref glow, 0.0f, 2.0f, "%.2f"))
+            _renderer.GlobalGlowScale = glow;
+
+        float luminosity = _renderer.GlobalLuminosityScale;
+        if (ImGui.SliderFloat("Luminosity", ref luminosity, 0.0f, 2.0f, "%.2f"))
+            _renderer.GlobalLuminosityScale = luminosity;
+
+        float saturation = _renderer.GlobalSaturation;
+        if (ImGui.SliderFloat("Saturation", ref saturation, 0.0f, 2.0f, "%.2f"))
+            _renderer.GlobalSaturation = saturation;
+
+        ImGui.Separator();
+        ImGui.Text("Physics Fidelity");
+
+        var config = _engine.Config;
+        bool configDirty = false;
+
+        bool adaptive = config.UseAdaptiveTimestep;
+        if (ImGui.Checkbox("Adaptive Timestep", ref adaptive))
+        {
+            config.UseAdaptiveTimestep = adaptive;
+            configDirty = true;
+        }
+
+        bool collisions = config.EnableCollisions;
+        if (ImGui.Checkbox("Collision Merging", ref collisions))
+        {
+            config.EnableCollisions = collisions;
+            configDirty = true;
+        }
+
+        int maxSubsteps = config.MaxSubstepsPerFrame;
+        if (ImGui.SliderInt("Max Substeps", ref maxSubsteps, 1, 64))
+        {
+            config.MaxSubstepsPerFrame = maxSubsteps;
+            configDirty = true;
+        }
+
+        float minDt = (float)config.MinDt;
+        if (ImGui.InputFloat("Min dt", ref minDt, 1e-5f, 1e-4f, "%.6f"))
+        {
+            config.MinDt = System.Math.Clamp(minDt, 1e-7f, (float)config.MaxDt);
+            configDirty = true;
+        }
+
+        float maxDt = (float)config.MaxDt;
+        if (ImGui.InputFloat("Max dt", ref maxDt, 1e-4f, 1e-3f, "%.5f"))
+        {
+            config.MaxDt = System.Math.Clamp(maxDt, (float)config.MinDt, 0.1f);
+            configDirty = true;
+        }
+
+        if (configDirty)
+            _engine.Reconfigure();
 
         ImGui.End();
     }
@@ -145,6 +284,8 @@ public class ImGuiOverlay
             var momentum = state.TotalMomentum;
             double momentumMag = System.Math.Sqrt(momentum.X * momentum.X + momentum.Y * momentum.Y + momentum.Z * momentum.Z);
             ImGui.Text($"Total Momentum:    {momentumMag:E6}");
+            ImGui.Text($"Collisions (step): {state.CollisionCount}");
+            ImGui.Text($"Explosion Bursts:  {state.CollisionBursts.Count}");
 
             // Update energy history for scrolling graph
             _energyHistory[_energyHistoryIndex] = (float)total;
@@ -250,70 +391,129 @@ public class ImGuiOverlay
     private void RenderAddBody()
     {
         ImGui.SetNextWindowPos(new Vector2(1330, 10), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSize(new Vector2(260, 340), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(320, 460), ImGuiCond.FirstUseEver);
         ImGui.Begin("Add Body");
 
-        // Template selector
-        ImGui.Text("Body Template:");
-        if (ImGui.Combo("##template", ref _selectedTemplate, _templateNames, _templateNames.Length))
+        var categoryNames = _catalog.Select(c => c.Name).ToArray();
+        if (categoryNames.Length == 0)
         {
-            // Auto-populate mass when template changes
-            _newBodyMass = _templateMasses[_selectedTemplate];
+            ImGui.Text("No catalog entries available.");
+            ImGui.End();
+            return;
         }
 
+        _selectedCategory = System.Math.Clamp(_selectedCategory, 0, categoryNames.Length - 1);
+
+        ImGui.Text("Category:");
+        ImGui.Combo("##catalog-category", ref _selectedCategory, categoryNames, categoryNames.Length);
+
+        var templates = GetSelectedTemplates();
+        var templateNames = templates.Select(t => t.Name).ToArray();
+
+        if (templateNames.Length == 0)
+        {
+            ImGui.TextDisabled("No templates in this category.");
+            ImGui.End();
+            return;
+        }
+
+        _selectedTemplate = System.Math.Clamp(_selectedTemplate, 0, templateNames.Length - 1);
+
+        ImGui.Text("Celestial Object:");
+        if (ImGui.Combo("##catalog-template", ref _selectedTemplate, templateNames, templateNames.Length))
+            _newBodyMass = (float)templates[_selectedTemplate].Mass;
+
+        var selectedTemplate = templates[_selectedTemplate];
+
         ImGui.Separator();
 
-        // Mass input
-        ImGui.Text("Mass (solar masses):");
-        ImGui.InputFloat("##mass", ref _newBodyMass, 0.0001f, 0.01f, "%.6f");
-
-        // Position input
-        ImGui.Text("Position (AU):");
-        ImGui.InputFloat3("##pos", ref _newBodyPos, "%.3f");
-
-        // Velocity input
-        ImGui.Text("Velocity (AU/TU):");
-        ImGui.InputFloat3("##vel", ref _newBodyVel, "%.4f");
+        ImGui.TextWrapped(_catalog[_selectedCategory].Description);
 
         ImGui.Separator();
+
+        // Placement mode
+        ImGui.Text("Placement Mode:");
+        int placementMode = _interactivePlacementEnabled ? 1 : 0;
+        ImGui.RadioButton("Manual", ref placementMode, 0);
+        ImGui.SameLine();
+        ImGui.RadioButton("Interactive", ref placementMode, 1);
+        _interactivePlacementEnabled = placementMode == 1;
+
+        // Manual mode controls
+        if (!_interactivePlacementEnabled)
+        {
+            ImGui.Text("Mass (solar masses):");
+            ImGui.InputFloat("##mass", ref _newBodyMass, 0.0001f, 0.01f, "%.6f");
+
+            ImGui.Text("Position (AU):");
+            ImGui.InputFloat3("##pos", ref _newBodyPos, "%.3f");
+
+            ImGui.Text("Velocity (AU/TU):");
+            ImGui.InputFloat3("##vel", ref _newBodyVel, "%.4f");
+
+            if (ImGui.Button("Place Body", new Vector2(-1, 30)))
+            {
+                var manualTemplate = selectedTemplate with { Mass = _newBodyMass };
+                if (Enum.TryParse<BodyType>(manualTemplate.BodyType, ignoreCase: true, out var parsedType))
+                {
+                    var body = new PhysicsBody(
+                        _nextBodyId,
+                        manualTemplate.Mass,
+                        new CelestialMechanics.Math.Vec3d(_newBodyPos.X, _newBodyPos.Y, _newBodyPos.Z),
+                        new CelestialMechanics.Math.Vec3d(_newBodyVel.X, _newBodyVel.Y, _newBodyVel.Z),
+                        parsedType)
+                    {
+                        Radius = manualTemplate.Radius,
+                        GravityStrength = manualTemplate.GravityStrength,
+                        GravityRange = manualTemplate.GravityRange,
+                        IsActive = true
+                    };
+
+                    _engine.AddBody(body);
+                    _nextBodyId++;
+                    _initialEnergy = double.NaN;
+                }
+            }
+        }
+        else
+        {
+            ImGui.TextWrapped("Interactive placement: ghost follows cursor in simulation panel. Right click to anchor, drag to set direction, left click to confirm.");
+            ImGui.InputFloat("Speed Scale", ref _directionSpeedScale, 0.05f, 0.1f, "%.3f");
+            ImGui.InputFloat("Min Speed", ref _directionMinSpeed, 0.01f, 0.1f, "%.3f");
+            ImGui.InputFloat("Max Speed", ref _directionMaxSpeed, 0.1f, 1.0f, "%.3f");
+
+            _directionSpeedScale = System.Math.Clamp(_directionSpeedScale, 0.01f, 50f);
+            _directionMinSpeed = System.Math.Clamp(_directionMinSpeed, 0.0f, 100f);
+            _directionMaxSpeed = System.Math.Clamp(_directionMaxSpeed, _directionMinSpeed, 500f);
+
+            ImGui.Separator();
+            ImGui.Text($"Placement State: {_placement.State}");
+            ImGui.Text($"Preview speed: {_placement.Draft.DirectionMagnitude:F3}");
+            if (ImGui.Button("Cancel Placement", new Vector2(-1, 28)))
+                _placement.Cancel();
+        }
 
         // Preview info
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
-            $"Type: {_templateNames[_selectedTemplate]}");
+            $"Type: {selectedTemplate.Name}");
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
-            $"Radius: {_templateRadii[_selectedTemplate]:F4}");
+            $"Radius: {selectedTemplate.Radius:F6} AU");
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
             $"ID: {_nextBodyId}");
 
-        ImGui.Separator();
-
-        // Add button
-        if (ImGui.Button("Add Body", new Vector2(-1, 30)))
-        {
-            var position = new CelestialMechanics.Math.Vec3d(_newBodyPos.X, _newBodyPos.Y, _newBodyPos.Z);
-            var velocity = new CelestialMechanics.Math.Vec3d(_newBodyVel.X, _newBodyVel.Y, _newBodyVel.Z);
-
-            var body = new PhysicsBody(
-                _nextBodyId,
-                _newBodyMass,
-                position,
-                velocity,
-                _templateTypes[_selectedTemplate])
-            {
-                Radius = _templateRadii[_selectedTemplate],
-                GravityStrength = 60,
-                GravityRange = 8,
-                IsActive = true
-            };
-
-            _engine.AddBody(body);
-            _nextBodyId++;
-
-            // Reset initial energy tracking since system changed
-            _initialEnergy = double.NaN;
-        }
+        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+            $"Mass: {selectedTemplate.Mass:E4} M_sun");
 
         ImGui.End();
+    }
+
+    private IReadOnlyList<BodyTemplate> GetSelectedTemplates()
+    {
+        if (_catalog.Count == 0)
+            return Array.Empty<BodyTemplate>();
+
+        _selectedCategory = System.Math.Clamp(_selectedCategory, 0, _catalog.Count - 1);
+        return _catalog[_selectedCategory].Templates;
     }
 
     private void RenderBodyInspector()

@@ -127,6 +127,12 @@ public class PhysicsConfig
     /// <summary>Maximum allowed timestep for adaptive mode.</summary>
     public double MaxDt { get; set; } = 0.01;
 
+    /// <summary>
+    /// Maximum physics substeps processed in a single render frame.
+    /// Prevents runaway catch-up loops under heavy load.
+    /// </summary>
+    public int MaxSubstepsPerFrame { get; set; } = 12;
+
     // ── Phase 5: SIMD ─────────────────────────────────────────────────────────
 
     /// <summary>

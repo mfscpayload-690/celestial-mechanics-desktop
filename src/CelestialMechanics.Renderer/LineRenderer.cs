@@ -11,6 +11,10 @@ public class LineRenderer : IDisposable
     private GL? _gl;
     private readonly List<float> _vertexData = new();
     private bool _dirty;
+    private float[] _uploadBuffer = Array.Empty<float>();
+    private nuint _vboCapacityBytes;
+
+    public bool HasLines => _vertexCount > 0;
 
     public void Initialize(GL gl)
     {
@@ -21,7 +25,11 @@ public class LineRenderer : IDisposable
 
         _vbo = gl.GenBuffer();
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
-        gl.BufferData(BufferTargetARB.ArrayBuffer, 0, ReadOnlySpan<byte>.Empty, BufferUsageARB.DynamicDraw);
+        _vboCapacityBytes = 1024;
+        unsafe
+        {
+            gl.BufferData(BufferTargetARB.ArrayBuffer, _vboCapacityBytes, null, BufferUsageARB.DynamicDraw);
+        }
 
         // Position (location 0)
         gl.EnableVertexAttribArray(0);
@@ -67,22 +75,53 @@ public class LineRenderer : IDisposable
     {
         if (!_dirty || _gl == null) return;
 
-        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
-        if (_vertexData.Count > 0)
+        int count = _vertexData.Count;
+        if (count == 0)
         {
-            var data = _vertexData.ToArray();
+            _dirty = false;
+            return;
+        }
+
+        if (_uploadBuffer.Length < count)
+            _uploadBuffer = new float[NextPowerOfTwo(count)];
+
+        _vertexData.CopyTo(_uploadBuffer);
+
+        nuint neededBytes = (nuint)(count * sizeof(float));
+
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+        if (neededBytes > _vboCapacityBytes)
+        {
+            _vboCapacityBytes = NextPowerOfTwoBytes(neededBytes);
             unsafe
             {
-                fixed (float* ptr = data)
-                    _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(data.Length * sizeof(float)), ptr, BufferUsageARB.DynamicDraw);
+                _gl.BufferData(BufferTargetARB.ArrayBuffer, _vboCapacityBytes, null, BufferUsageARB.DynamicDraw);
             }
         }
-        else
+
+        unsafe
         {
-            _gl.BufferData(BufferTargetARB.ArrayBuffer, 0, ReadOnlySpan<byte>.Empty, BufferUsageARB.DynamicDraw);
+            fixed (float* ptr = _uploadBuffer)
+                _gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, neededBytes, ptr);
         }
 
         _dirty = false;
+    }
+
+    private static int NextPowerOfTwo(int value)
+    {
+        int p = 1;
+        while (p < value)
+            p <<= 1;
+        return p;
+    }
+
+    private static nuint NextPowerOfTwoBytes(nuint value)
+    {
+        nuint p = 1;
+        while (p < value)
+            p <<= 1;
+        return p;
     }
 
     public void Render(GL gl, ShaderProgram shader)

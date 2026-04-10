@@ -9,10 +9,18 @@ public class InputHandler
     private bool _leftMouseDown;
     private bool _rightMouseDown;
     private System.Numerics.Vector2 _lastMousePos;
+    private bool _leftClickThisFrame;
+    private bool _rightClickThisFrame;
+
+    public bool BlockCameraMouseControls { get; set; }
+    public System.Numerics.Vector2 MousePosition { get; private set; }
+    public bool LeftClickThisFrame => _leftClickThisFrame;
+    public bool RightClickThisFrame => _rightClickThisFrame;
 
     public event Action? OnToggleSimulation;  // Space
     public event Action? OnStepSimulation;    // Right arrow
     public event Action? OnResetSimulation;   // R key
+    public event Action? OnCancelPlacement;   // Escape
 
     public InputHandler(IInputContext input, Camera camera)
     {
@@ -39,6 +47,7 @@ public class InputHandler
             case Key.Space: OnToggleSimulation?.Invoke(); break;
             case Key.Right: OnStepSimulation?.Invoke(); break;
             case Key.R: OnResetSimulation?.Invoke(); break;
+            case Key.Escape: OnCancelPlacement?.Invoke(); break;
             case Key.G: // Toggle grid - needs to be wired
                 break;
         }
@@ -49,20 +58,32 @@ public class InputHandler
 
     private void OnMouseDown(IMouse mouse, MouseButton button)
     {
+        MousePosition = new System.Numerics.Vector2(mouse.Position.X, mouse.Position.Y);
+
         if (button == MouseButton.Left)
         {
+            _leftClickThisFrame = true;
+            if (BlockCameraMouseControls)
+                return;
+
             _leftMouseDown = true;
-            _lastMousePos = new System.Numerics.Vector2(mouse.Position.X, mouse.Position.Y);
+            _lastMousePos = MousePosition;
         }
         else if (button == MouseButton.Right)
         {
+            _rightClickThisFrame = true;
+            if (BlockCameraMouseControls)
+                return;
+
             _rightMouseDown = true;
-            _lastMousePos = new System.Numerics.Vector2(mouse.Position.X, mouse.Position.Y);
+            _lastMousePos = MousePosition;
         }
     }
 
     private void OnMouseUp(IMouse mouse, MouseButton button)
     {
+        MousePosition = new System.Numerics.Vector2(mouse.Position.X, mouse.Position.Y);
+
         if (button == MouseButton.Left)
             _leftMouseDown = false;
         else if (button == MouseButton.Right)
@@ -72,11 +93,12 @@ public class InputHandler
     private void OnMouseMove(IMouse mouse, System.Numerics.Vector2 position)
     {
         var currentPos = new System.Numerics.Vector2(position.X, position.Y);
+        MousePosition = currentPos;
         var delta = currentPos - _lastMousePos;
         _lastMousePos = currentPos;
 
         // Skip if ImGui wants mouse input
-        if (ImGuiNET.ImGui.GetIO().WantCaptureMouse)
+        if (ImGuiNET.ImGui.GetIO().WantCaptureMouse || BlockCameraMouseControls)
             return;
 
         if (_leftMouseDown)
@@ -104,5 +126,11 @@ public class InputHandler
     public void Update(float deltaTime)
     {
         _camera.Update(deltaTime);
+    }
+
+    public void EndFrame()
+    {
+        _leftClickThisFrame = false;
+        _rightClickThisFrame = false;
     }
 }

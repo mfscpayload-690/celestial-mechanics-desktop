@@ -12,15 +12,16 @@ public class InstancedSphereRenderer : IDisposable
     private int _indexCount;
     private int _instanceCount;
     private GL? _gl;
+    private nuint _gpuInstanceCapacityBytes;
 
-    // Per-instance data: 4x4 matrix (16 floats) + color (4 floats) = 20 floats = 80 bytes
-    private const int InstanceStride = 20 * sizeof(float);
+    // Per-instance data: pos.xyz + radius + color.rgba + visual.rgba = 12 floats
+    private const int InstanceStride = 12 * sizeof(float);
     private float[] _instanceData = Array.Empty<float>();
 
     public void Initialize(GL gl)
     {
         _gl = gl;
-        GenerateIcosphere(2, out float[] vertices, out uint[] indices);
+        GenerateIcosphere(3, out float[] vertices, out uint[] indices);
         _indexCount = indices.Length;
 
         _vao = gl.GenVertexArray();
@@ -54,20 +55,26 @@ public class InstancedSphereRenderer : IDisposable
         // Instance buffer
         _instanceVbo = gl.GenBuffer();
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, _instanceVbo);
-        gl.BufferData(BufferTargetARB.ArrayBuffer, 0, ReadOnlySpan<byte>.Empty, BufferUsageARB.DynamicDraw);
-
-        // Instance model matrix (locations 2-5, 4 vec4s)
-        for (uint i = 0; i < 4; i++)
+        _gpuInstanceCapacityBytes = 1024;
+        unsafe
         {
-            gl.EnableVertexAttribArray(2 + i);
-            gl.VertexAttribPointer(2 + i, 4, VertexAttribPointerType.Float, false, (uint)InstanceStride, (nint)(i * 4 * sizeof(float)));
-            gl.VertexAttribDivisor(2 + i, 1);
+            gl.BufferData(BufferTargetARB.ArrayBuffer, _gpuInstanceCapacityBytes, null, BufferUsageARB.DynamicDraw);
         }
 
-        // Instance color (location 6)
-        gl.EnableVertexAttribArray(6);
-        gl.VertexAttribPointer(6, 4, VertexAttribPointerType.Float, false, (uint)InstanceStride, 16 * sizeof(float));
-        gl.VertexAttribDivisor(6, 1);
+        // Instance position.xyz + radius (location 2)
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, VertexAttribPointerType.Float, false, (uint)InstanceStride, 0);
+        gl.VertexAttribDivisor(2, 1);
+
+        // Instance color (location 3)
+        gl.EnableVertexAttribArray(3);
+        gl.VertexAttribPointer(3, 4, VertexAttribPointerType.Float, false, (uint)InstanceStride, 4 * sizeof(float));
+        gl.VertexAttribDivisor(3, 1);
+
+        // Instance visual params (location 4)
+        gl.EnableVertexAttribArray(4);
+        gl.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, (uint)InstanceStride, 8 * sizeof(float));
+        gl.VertexAttribDivisor(4, 1);
 
         gl.BindVertexArray(0);
     }
@@ -77,46 +84,54 @@ public class InstancedSphereRenderer : IDisposable
         _instanceCount = count;
         if (count == 0) return;
 
-        int dataSize = count * 20;
+        int dataSize = count * 12;
         if (_instanceData.Length < dataSize)
             _instanceData = new float[dataSize];
 
         for (int i = 0; i < count; i++)
         {
             ref var body = ref bodies[i];
-            float scale = body.Radius;
-            var model = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateTranslation(body.Position);
+            int offset = i * 12;
 
-            int offset = i * 20;
-            // Column-major for OpenGL
-            _instanceData[offset + 0] = model.M11;
-            _instanceData[offset + 1] = model.M21;
-            _instanceData[offset + 2] = model.M31;
-            _instanceData[offset + 3] = model.M41;
-            _instanceData[offset + 4] = model.M12;
-            _instanceData[offset + 5] = model.M22;
-            _instanceData[offset + 6] = model.M32;
-            _instanceData[offset + 7] = model.M42;
-            _instanceData[offset + 8] = model.M13;
-            _instanceData[offset + 9] = model.M23;
-            _instanceData[offset + 10] = model.M33;
-            _instanceData[offset + 11] = model.M43;
-            _instanceData[offset + 12] = model.M14;
-            _instanceData[offset + 13] = model.M24;
-            _instanceData[offset + 14] = model.M34;
-            _instanceData[offset + 15] = model.M44;
-            _instanceData[offset + 16] = body.Color.X;
-            _instanceData[offset + 17] = body.Color.Y;
-            _instanceData[offset + 18] = body.Color.Z;
-            _instanceData[offset + 19] = body.Color.W;
+            _instanceData[offset + 0] = body.Position.X;
+            _instanceData[offset + 1] = body.Position.Y;
+            _instanceData[offset + 2] = body.Position.Z;
+            _instanceData[offset + 3] = body.Radius;
+            _instanceData[offset + 4] = body.Color.X;
+            _instanceData[offset + 5] = body.Color.Y;
+            _instanceData[offset + 6] = body.Color.Z;
+            _instanceData[offset + 7] = body.Color.W;
+            _instanceData[offset + 8] = body.VisualParams.X;
+            _instanceData[offset + 9] = body.VisualParams.Y;
+            _instanceData[offset + 10] = body.VisualParams.Z;
+            _instanceData[offset + 11] = body.VisualParams.W;
         }
 
         _gl!.BindBuffer(BufferTargetARB.ArrayBuffer, _instanceVbo);
+
+        nuint neededBytes = (nuint)(count * InstanceStride);
+        if (neededBytes > _gpuInstanceCapacityBytes)
+        {
+            _gpuInstanceCapacityBytes = NextPowerOfTwoBytes(neededBytes);
+            unsafe
+            {
+                _gl.BufferData(BufferTargetARB.ArrayBuffer, _gpuInstanceCapacityBytes, null, BufferUsageARB.DynamicDraw);
+            }
+        }
+
         unsafe
         {
             fixed (float* ptr = _instanceData)
-                _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(count * InstanceStride), ptr, BufferUsageARB.DynamicDraw);
+                _gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, neededBytes, ptr);
         }
+    }
+
+    private static nuint NextPowerOfTwoBytes(nuint value)
+    {
+        nuint p = 1;
+        while (p < value)
+            p <<= 1;
+        return p;
     }
 
     public unsafe void Render(GL gl, ShaderProgram shader)

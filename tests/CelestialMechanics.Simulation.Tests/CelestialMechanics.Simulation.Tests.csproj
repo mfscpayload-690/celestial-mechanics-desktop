@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\src\CelestialMechanics.Simulation\CelestialMechanics.Simulation.csproj" />
     <ProjectReference Include="..\..\src\CelestialMechanics.Physics\CelestialMechanics.Physics.csproj" />
     <ProjectReference Include="..\..\src\CelestialMechanics.Math\CelestialMechanics.Math.csproj" />
+    <ProjectReference Include="..\..\src\CelestialMechanics.Data\CelestialMechanics.Data.csproj" />
   </ItemGroup>
 
 </Project>

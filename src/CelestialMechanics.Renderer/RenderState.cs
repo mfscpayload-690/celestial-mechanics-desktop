@@ -11,6 +11,7 @@ public struct RenderBody
     public float Radius;
     public Vector4 Color;
     public int BodyType;
+    public Vector4 VisualParams;
 }
 
 public class RenderState
@@ -55,7 +56,8 @@ public class RenderState
                 Position = pos,
                 Radius = MathF.Max(0.01f, (float)body.Radius),
                 Color = GetBodyColor(body.Type),
-                BodyType = (int)body.Type
+                BodyType = (int)body.Type,
+                VisualParams = GetVisualParams(body.Type)
             };
 
             // Track black holes for lensing (max 8)
@@ -80,5 +82,20 @@ public class RenderState
         BodyType.NeutronStar => new Vector4(0.5f, 0.8f, 1.0f, 1.0f),
         BodyType.BlackHole => new Vector4(0.1f, 0.0f, 0.1f, 0.7f), // Darker, slightly transparent
         _ => new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+    };
+
+    // x = visual type id, y = luminosity, z = glow intensity, w = atmosphere/rim strength
+    private static Vector4 GetVisualParams(BodyType type) => type switch
+    {
+        BodyType.Star => new Vector4(0f, 1.25f, 1.05f, 0.22f),
+        BodyType.Planet => new Vector4(1f, 0.05f, 0.05f, 0.35f),
+        BodyType.RockyPlanet => new Vector4(1f, 0.04f, 0.04f, 0.35f),
+        BodyType.GasGiant => new Vector4(2f, 0.11f, 0.1f, 0.24f),
+        BodyType.Moon => new Vector4(3f, 0.02f, 0.02f, 0.1f),
+        BodyType.Asteroid => new Vector4(4f, 0.02f, 0.02f, 0.08f),
+        BodyType.Comet => new Vector4(4f, 0.03f, 0.03f, 0.12f),
+        BodyType.NeutronStar => new Vector4(5f, 1.45f, 1.3f, 0.28f),
+        BodyType.BlackHole => new Vector4(6f, 0.14f, 0.45f, 0.55f),
+        _ => new Vector4(1f, 0.03f, 0.03f, 0.2f),
     };
 }

@@ -81,6 +81,20 @@ public class NBodySolver
     // ── Shared ─────────────────────────────────────────────────────────────────
     private readonly EnergyCalculator _energy = new();
     public IIntegrator CurrentIntegrator => _integrator;
+
+    public ReadOnlySpan<DiskParticle> GetAccretionParticles()
+    {
+        if (_accretionDisk == null)
+            return ReadOnlySpan<DiskParticle>.Empty;
+
+        return _accretionDisk.Particles;
+    }
+
+    public int GetActiveAccretionParticleCount()
+    {
+        return _accretionDisk?.ActiveCount ?? 0;
+    }
+
     private double _currentTime;
     private double _initialEnergy;
     private bool _initialEnergySet;
@@ -271,6 +285,9 @@ public class NBodySolver
             TotalMomentum    = momentum,
             EnergyDrift      = energyDrift,
             CollisionCount   = _collisionResolver.LastCollisionCount,
+            CollisionBursts  = _collisionResolver.LastBurstEvents.Count > 0
+                ? _collisionResolver.LastBurstEvents.ToArray()
+                : Array.Empty<CollisionBurstEvent>(),
             CurrentDt        = dt
         };
     }
@@ -290,7 +307,16 @@ public class NBodySolver
         {
             var events = _collisionDetector.Detect(_soaBodies);
             if (events.Count > 0)
-                _collisionResolver.Resolve(events, _soaBodies, bodies);
+            {
+                _collisionResolver.Resolve(
+                    events,
+                    _soaBodies,
+                    bodies,
+                    dt,
+                    _currentTime,
+                    _enableAccretionDisks ? _accretionDisk : null,
+                    promoteCompactRemnants: _enableAccretionDisks);
+            }
         }
 
         _soaBodies.CopyTo(bodies);

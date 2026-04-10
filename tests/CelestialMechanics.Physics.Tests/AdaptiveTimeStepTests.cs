@@ -65,7 +65,7 @@ public class AdaptiveTimeStepTests
 
         engine.SetBodies(new[] { b0, b1 });
         engine.Start();
-        engine.Update(0.05);
+        engine.Update(0.006);
 
         // dt should be reduced below MaxDt due to high acceleration
         Assert.True(engine.CurrentState.CurrentDt < config.MaxDt,
@@ -134,5 +134,95 @@ public class AdaptiveTimeStepTests
 
         Assert.True(engine.CurrentState.CurrentDt >= minDt,
             $"dt {engine.CurrentState.CurrentDt} should be >= MinDt {minDt}");
+    }
+
+    // ── Test 5: Collision limiter shrinks dt for very fast bodies ───────────
+
+    [Fact]
+    public void AdaptiveMode_CollisionLimiterReducesDtForFastBodies()
+    {
+        var config = new PhysicsConfig
+        {
+            TimeStep = 0.01,
+            DeterministicMode = false,
+            UseAdaptiveTimestep = true,
+            EnableCollisions = true,
+            MinDt = 1e-6,
+            MaxDt = 0.01,
+            UseSoAPath = true,
+        };
+
+        var engine = new SimulationEngine(config);
+        engine.SetBodies(new[]
+        {
+            new PhysicsBody(0, 1.0, new Vec3d(-10, 0, 0), new Vec3d(100, 0, 0), BodyType.Asteroid) { Radius = 0.1 },
+            new PhysicsBody(1, 1.0, new Vec3d(10, 0, 0), new Vec3d(-100, 0, 0), BodyType.Asteroid) { Radius = 0.1 },
+        });
+
+        engine.Start();
+        engine.Update(0.02);
+
+        Assert.True(engine.CurrentState.CurrentDt < 0.01,
+            $"Expected collision limiter to reduce dt below 1e-2, got {engine.CurrentState.CurrentDt}");
+    }
+
+    // ── Test 6: MaxSubstepsPerFrame bounds physics catch-up work ────────────
+
+    [Fact]
+    public void Update_RespectsMaxSubstepsPerFrame()
+    {
+        var config = new PhysicsConfig
+        {
+            TimeStep = 0.01,
+            DeterministicMode = true,
+            UseAdaptiveTimestep = false,
+            MaxSubstepsPerFrame = 2,
+            UseSoAPath = true,
+        };
+
+        var engine = new SimulationEngine(config);
+        engine.SetBodies(new[]
+        {
+            new PhysicsBody(0, 1.0, Vec3d.Zero, Vec3d.Zero, BodyType.Star),
+        });
+
+        engine.Start();
+        engine.Update(1.0);
+
+        Assert.True(engine.CurrentTime <= 0.0200001,
+            $"CurrentTime {engine.CurrentTime} exceeded expected cap for 2 substeps");
+    }
+
+    // ── Test 7: Tiny compact-object radii should not freeze interactive dt ──
+
+    [Fact]
+    public void AdaptiveMode_DoesNotCollapseDtWhenCompactObjectPresent()
+    {
+        var config = new PhysicsConfig
+        {
+            TimeStep = 0.001,
+            DeterministicMode = false,
+            UseAdaptiveTimestep = true,
+            EnableCollisions = true,
+            SofteningEpsilon = 1e-4,
+            MinDt = 1e-6,
+            MaxDt = 0.01,
+            UseSoAPath = true,
+        };
+
+        var engine = new SimulationEngine(config);
+        engine.SetBodies(new[]
+        {
+            new PhysicsBody(0, 1.0, new Vec3d(1, 0, 0), new Vec3d(0, 0, 5), BodyType.Star) { Radius = 0.05 },
+            new PhysicsBody(1, 1.0, new Vec3d(-1, 0, 0), new Vec3d(0, 0, -5), BodyType.Star) { Radius = 0.05 },
+            new PhysicsBody(2, 20.0, Vec3d.Zero, Vec3d.Zero, BodyType.BlackHole) { Radius = 5.8e-7 },
+        });
+
+        engine.Start();
+        engine.Update(0.01);
+
+        // Regression guard: compact radii should not force dt close to MinDt.
+        Assert.True(engine.CurrentState.CurrentDt > 1e-5,
+            $"Expected effective dt to remain interactive, got {engine.CurrentState.CurrentDt}");
     }
 }

@@ -1,4 +1,5 @@
 using CelestialMechanics.Physics.Types;
+using CelestialMechanics.Physics.Extensions;
 using CelestialMechanics.Physics.Forces;
 using CelestialMechanics.Physics.Integrators;
 using CelestialMechanics.Physics.Solvers;
@@ -17,6 +18,7 @@ public class SimulationEngine
     private SimulationState _previousState = new();
     private EngineState _state = EngineState.Stopped;
     private PhysicsConfig _config;
+    private double _lastAdaptiveDt;
 
     // Public read-only access
     public EngineState State => _state;
@@ -24,13 +26,20 @@ public class SimulationEngine
     public SimulationState PreviousState => _previousState;
     public double InterpolationAlpha { get; private set; }
     public PhysicsBody[] Bodies => _bodies;
+    public int ActiveAccretionParticleCount => _solver.GetActiveAccretionParticleCount();
     public double CurrentTime { get; private set; }
     public PhysicsConfig Config => _config;
+
+    public ReadOnlySpan<DiskParticle> GetAccretionParticles()
+    {
+        return _solver.GetAccretionParticles();
+    }
 
     public SimulationEngine(PhysicsConfig? config = null)
     {
         _config = config ?? new PhysicsConfig();
         _fixedDt = _config.TimeStep;
+        _lastAdaptiveDt = _fixedDt;
         _bodies = Array.Empty<PhysicsBody>();
         _solver = new NBodySolver();
         // Add default Newtonian gravity and Verlet integrator
@@ -41,11 +50,16 @@ public class SimulationEngine
         });
         _solver.SetIntegrator(new VerletIntegrator());
 
-        // Wire SoA path from config. SoA is only available for the Verlet
-        // integrator; Euler and RK4 fall back to the AoS path automatically
-        // (see SetIntegrator below).
+        Reconfigure();
+    }
+
+    public void Reconfigure()
+    {
+        _fixedDt = _config.TimeStep;
+        bool soaCapable = _solver.CurrentIntegrator is VerletIntegrator;
+
         _solver.ConfigureSoA(
-            enabled:                  _config.UseSoAPath,
+            enabled:                  soaCapable && _config.UseSoAPath,
             softening:                _config.SofteningEpsilon,
             deterministic:            _config.DeterministicMode,
             useParallel:              _config.UseParallelComputation,
@@ -99,6 +113,7 @@ public class SimulationEngine
     {
         _accumulator = 0;
         CurrentTime = 0;
+        _lastAdaptiveDt = _fixedDt;
         _solver.Reset();
     }
 
@@ -118,17 +133,24 @@ public class SimulationEngine
         _accumulator += frameTime;
 
         double dt = ComputeDt();
-        while (_accumulator >= dt)
+        int maxSubsteps = System.Math.Max(1, _config.MaxSubstepsPerFrame);
+        int substeps = 0;
+        while (_accumulator >= dt && substeps < maxSubsteps)
         {
             _previousState = _currentState;
             _currentState = _solver.Step(_bodies, dt);
             _accumulator -= dt;
             CurrentTime += dt;
+            substeps++;
 
             // Recompute dt after each step (accelerations may have changed)
             if (_config.UseAdaptiveTimestep && !_config.DeterministicMode)
                 dt = ComputeDt();
         }
+
+        // Prevent runaway catch-up loops from stalling rendering.
+        if (_accumulator >= dt)
+            _accumulator = System.Math.Min(_accumulator, dt * 2.0);
 
         InterpolationAlpha = dt > 0 ? _accumulator / dt : 0.0;
     }
@@ -141,26 +163,91 @@ public class SimulationEngine
     private double ComputeDt()
     {
         if (_config.DeterministicMode || !_config.UseAdaptiveTimestep)
+        {
+            _lastAdaptiveDt = _fixedDt;
             return _fixedDt;
+        }
 
-        // Find maximum acceleration magnitude across all active bodies
+        // Find maximum acceleration/speed and smallest active radius.
+        // Compact remnants (especially black holes) can have extremely tiny physical
+        // radii, which would otherwise force dt near MinDt and visually "freeze"
+        // the scene in interactive mode.
         double maxAcc2 = 0.0;
+        double maxSpeed = 0.0;
+        double minRadiusAny = double.MaxValue;
+        double minRadiusNonCompact = double.MaxValue;
+        int activeCount = 0;
+
         for (int i = 0; i < _bodies.Length; i++)
         {
             if (!_bodies[i].IsActive) continue;
+            activeCount++;
+
             ref var acc = ref _bodies[i].Acceleration;
             double a2 = acc.X * acc.X + acc.Y * acc.Y + acc.Z * acc.Z;
             if (a2 > maxAcc2) maxAcc2 = a2;
+
+            double v = _bodies[i].Velocity.Length;
+            if (v > maxSpeed) maxSpeed = v;
+
+            double r = _bodies[i].Radius;
+            if (r > 1e-12)
+            {
+                if (r < minRadiusAny)
+                    minRadiusAny = r;
+
+                bool isCompact = _bodies[i].Type == BodyType.BlackHole ||
+                                 _bodies[i].Type == BodyType.NeutronStar;
+                if (!isCompact && r < minRadiusNonCompact)
+                    minRadiusNonCompact = r;
+            }
         }
 
-        if (maxAcc2 < 1e-30)
+        if (activeCount == 0)
             return _config.MaxDt;
 
-        // Safety factor η = 0.1 (conservative; dt = 0.1 / √max_acc)
-        const double eta = 0.1;
-        double dtAdaptive = eta / System.Math.Sqrt(System.Math.Sqrt(maxAcc2));
+        double dtAcc = _config.MaxDt;
+        if (maxAcc2 >= 1e-30)
+        {
+            // Safety factor η = 0.1 (conservative).
+            const double eta = 0.1;
+            double maxAcc = System.Math.Sqrt(maxAcc2);
+            dtAcc = eta / System.Math.Sqrt(maxAcc);
+        }
 
-        return System.Math.Clamp(dtAdaptive, _config.MinDt, _config.MaxDt);
+        double dtCollision = _config.MaxDt;
+        if (_config.EnableCollisions &&
+            maxSpeed > 1e-12 &&
+            minRadiusAny < double.MaxValue)
+        {
+            // Prefer non-compact body scales for interactive collision limiting.
+            double collisionRadius = minRadiusNonCompact < double.MaxValue
+                ? minRadiusNonCompact
+                : minRadiusAny;
+
+            // Never let limiter resolution drop below softening scale.
+            collisionRadius = System.Math.Max(collisionRadius, _config.SofteningEpsilon * 4.0);
+
+            // Keep per-step travel to a fraction of the smallest radius.
+            dtCollision = 0.3 * collisionRadius / maxSpeed;
+        }
+
+        double dtClamped = System.Math.Clamp(
+            System.Math.Min(dtAcc, dtCollision),
+            _config.MinDt,
+            _config.MaxDt);
+
+        // Damp abrupt dt oscillations between frames for smoother integration.
+        if (_lastAdaptiveDt > 0.0)
+        {
+            double minStep = _lastAdaptiveDt * 0.5;
+            double maxStep = _lastAdaptiveDt * 1.25;
+            dtClamped = System.Math.Clamp(dtClamped, minStep, maxStep);
+            dtClamped = System.Math.Clamp(dtClamped, _config.MinDt, _config.MaxDt);
+        }
+
+        _lastAdaptiveDt = dtClamped;
+        return dtClamped;
     }
 
     public void SetIntegrator(string name)
@@ -173,28 +260,7 @@ public class SimulationEngine
             _ => throw new ArgumentException($"Unknown integrator: {name}", nameof(name))
         };
         _solver.SetIntegrator(integrator);
-
-        // SoA Verlet is only available for the symplectic Verlet integrator.
-        // Euler and RK4 fall back to the AoS path automatically; switching to
-        // Verlet re-enables whatever the config requested.
-        bool soaCapable = name == "Verlet";
-        _solver.ConfigureSoA(
-            enabled:                  soaCapable && _config.UseSoAPath,
-            softening:                _config.SofteningEpsilon,
-            deterministic:            _config.DeterministicMode,
-            useParallel:              _config.UseParallelComputation,
-            useBarnesHut:             _config.UseBarnesHut,
-            theta:                    _config.Theta,
-            enableCollisions:         _config.EnableCollisions,
-            useSimd:                  _config.UseSimd,
-            enablePostNewtonian:      _config.EnablePostNewtonian,
-            enableAccretionDisks:     _config.EnableAccretionDisks,
-            enableGravitationalWaves: _config.EnableGravitationalWaves,
-            maxAccretionParticles:    _config.MaxAccretionParticles,
-            enableJets:               _config.EnableJetEmission,
-            jetThreshold:             _config.AccretionJetThreshold,
-            gwObserverDistance:       _config.GravitationalWaveObserverDistance
-        );
+        Reconfigure();
     }
 
     public string GetIntegratorName()

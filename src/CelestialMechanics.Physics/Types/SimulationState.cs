@@ -17,5 +17,6 @@ public class SimulationState
     public Vec3d TotalMomentum { get; init; }
     public double EnergyDrift { get; init; }
     public int CollisionCount { get; init; }
+    public IReadOnlyList<CollisionBurstEvent> CollisionBursts { get; init; } = Array.Empty<CollisionBurstEvent>();
     public double CurrentDt { get; init; }
 }
