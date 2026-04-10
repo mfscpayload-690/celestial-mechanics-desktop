@@ -3,8 +3,16 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"       # stable:      v1.0.0
-      - "v[0-9]+.[0-9]+.[0-9]+-*"     # pre-release: v1.0.0-beta.1
+      - "v*.*.*"       # stable:      v1.0.0
+      - "v*.*.*-*"     # pre-release: v1.0.0-beta.1
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
 
 jobs:
 
@@ -28,22 +36,23 @@ jobs:
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
-          path: ~/.nuget/packages
+          path: ${{ env.NUGET_PACKAGES }}
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
       - name: Restore
-        run: dotnet restore CelestialMechanics.sln
+        run: dotnet restore CelestialMechanics.sln -m:1 /nr:false
 
       - name: Build (Release)
-        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release
+        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release -m:1 /nr:false
 
       - name: Test — Math
         run: >
           dotnet test
           tests/CelestialMechanics.Math.Tests/CelestialMechanics.Math.Tests.csproj
           --no-build --configuration Release
+          -m:1 /nr:false
           --logger "trx;LogFileName=math-results.trx"
           --results-directory ./test-results
 
@@ -52,7 +61,26 @@ jobs:
           dotnet test
           tests/CelestialMechanics.Physics.Tests/CelestialMechanics.Physics.Tests.csproj
           --no-build --configuration Release
+          -m:1 /nr:false
           --logger "trx;LogFileName=physics-results.trx"
+          --results-directory ./test-results
+
+      - name: Test — AppCore
+        run: >
+          dotnet test
+          tests/CelestialMechanics.AppCore.Tests/CelestialMechanics.AppCore.Tests.csproj
+          --no-build --configuration Release
+          -m:1 /nr:false
+          --logger "trx;LogFileName=appcore-results.trx"
+          --results-directory ./test-results
+
+      - name: Test — Simulation
+        run: >
+          dotnet test
+          tests/CelestialMechanics.Simulation.Tests/CelestialMechanics.Simulation.Tests.csproj
+          --no-build --configuration Release
+          -m:1 /nr:false
+          --logger "trx;LogFileName=simulation-results.trx"
           --results-directory ./test-results
 
       - name: Upload test results
@@ -109,7 +137,7 @@ jobs:
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
-          path: ~/.nuget/packages
+          path: ${{ env.NUGET_PACKAGES }}
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
@@ -120,6 +148,8 @@ jobs:
           src/CelestialMechanics.App/CelestialMechanics.App.csproj
           --configuration Release
           --runtime ${{ matrix.rid }}
+          -m:1
+          /nr:false
           --self-contained true
           -p:PublishSingleFile=true
           -p:PublishReadyToRun=true

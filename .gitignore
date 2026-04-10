@@ -28,6 +28,7 @@ Thumbs.db
 
 # Project specific
 .gemini/
+.sixth/
 *.log
 test_out.txt
 tmpclaude-*
@@ -41,3 +42,31 @@ walkthrough.md
 # Build
 artifacts/
 publish/
+build_artifacts/
+publish_v2/
+publish_new/
+
+# .NET test output
+TestResults/
+test-results/
+*.trx
+coverage.cobertura.xml
+*.coverage
+*.coveragexml
+
+# Native/CMake local build folders
+engine/build/
+engine/cmake-build-*/
+ide/build/
+ide/cmake-build-*/
+
+# Local diagnostics and ad-hoc build outputs
+compile_output.txt
+fresh_*_build.txt
+fresh_*_diag.txt
+publish_log*.txt
+*_restore.log
+*_test.log
+
+# Alternate build intermediates
+**/obj_alt/

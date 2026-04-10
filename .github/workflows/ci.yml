@@ -7,7 +7,7 @@
 #
 #  The App and Renderer projects reference Silk.NET / OpenGL native libraries
 #  which are dynamically loaded at *runtime* only, so headless CI build is fine.
-#  Tests (Math.Tests, Physics.Tests) are pure .NET — no GPU or display required.
+#  Test projects are pure .NET and run without GPU/display dependencies.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
@@ -29,8 +29,16 @@ on:
 
 # Cancel in-progress runs on the same branch/PR to save runner minutes.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
 
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
@@ -63,20 +71,20 @@ jobs:
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
-          path: ~/.nuget/packages
+          path: ${{ env.NUGET_PACKAGES }}
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
       - name: Restore
-        run: dotnet restore CelestialMechanics.sln
+        run: dotnet restore CelestialMechanics.sln -m:1 /nr:false
 
       - name: Build (Release)
-        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release
+        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release -m:1 /nr:false
 
   # ───────────────────────────────────────────────────────────────────────────
   #  Job 2 — Unit tests + code coverage
-  #  Runs on Linux (fastest free tier, no GUI needed for physics/math tests).
+  #  Runs on Linux (fastest free tier, no GUI needed for backend test projects).
   #  Uploads: test results (.trx) and coverage report (Cobertura XML).
   # ───────────────────────────────────────────────────────────────────────────
   test:
@@ -95,17 +103,17 @@ jobs:
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
-          path: ~/.nuget/packages
+          path: ${{ env.NUGET_PACKAGES }}
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
       - name: Restore
-        run: dotnet restore CelestialMechanics.sln
+        run: dotnet restore CelestialMechanics.sln -m:1 /nr:false
 
       # Build in Release to match the configuration used by build-check.
       - name: Build (Release)
-        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release
+        run: dotnet build CelestialMechanics.sln --no-restore --configuration Release -m:1 /nr:false
 
       # ── Math unit tests ────────────────────────────────────────────────────
       - name: Test — CelestialMechanics.Math
@@ -114,21 +122,55 @@ jobs:
           tests/CelestialMechanics.Math.Tests/CelestialMechanics.Math.Tests.csproj
           --no-build
           --configuration Release
+          -m:1
+          /nr:false
           --logger "trx;LogFileName=math-results.trx"
           --results-directory ./test-results/math
           --collect:"XPlat Code Coverage"
           --
           DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
 
-      # ── Physics unit tests (integrators, gravity, conservation laws) ───────
+      # ── Physics unit tests (integrators, gravity, conservation laws) ──────
       - name: Test — CelestialMechanics.Physics
         run: >
           dotnet test
           tests/CelestialMechanics.Physics.Tests/CelestialMechanics.Physics.Tests.csproj
           --no-build
           --configuration Release
+          -m:1
+          /nr:false
           --logger "trx;LogFileName=physics-results.trx"
           --results-directory ./test-results/physics
+          --collect:"XPlat Code Coverage"
+          --
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      # ── AppCore unit tests (serialization, scene graph, snapshots) ─────────
+      - name: Test — CelestialMechanics.AppCore
+        run: >
+          dotnet test
+          tests/CelestialMechanics.AppCore.Tests/CelestialMechanics.AppCore.Tests.csproj
+          --no-build
+          --configuration Release
+          -m:1
+          /nr:false
+          --logger "trx;LogFileName=appcore-results.trx"
+          --results-directory ./test-results/appcore
+          --collect:"XPlat Code Coverage"
+          --
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      # ── Simulation unit tests (systems, orchestration, catastrophic events) ─
+      - name: Test — CelestialMechanics.Simulation
+        run: >
+          dotnet test
+          tests/CelestialMechanics.Simulation.Tests/CelestialMechanics.Simulation.Tests.csproj
+          --no-build
+          --configuration Release
+          -m:1
+          /nr:false
+          --logger "trx;LogFileName=simulation-results.trx"
+          --results-directory ./test-results/simulation
           --collect:"XPlat Code Coverage"
           --
           DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
