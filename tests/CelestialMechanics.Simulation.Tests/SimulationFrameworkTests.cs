@@ -641,11 +641,11 @@ public class SimulationManagerTests
 
         sim.AddEntity(e);
         sim.Step(0.001);
-        Assert.Equal(1, sim.Entities.Count);
+        Assert.Single(sim.Entities);
 
         sim.RemoveEntity(e);
         sim.Step(0.001);
-        Assert.Equal(0, sim.Entities.Count);
+        Assert.Empty(sim.Entities);
     }
 
     [Fact]

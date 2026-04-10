@@ -13,8 +13,8 @@ public class SimulationEngine
     private NBodySolver _solver;
     private double _accumulator;
     private double _fixedDt;
-    private SimulationState _currentState;
-    private SimulationState _previousState;
+    private SimulationState _currentState = new();
+    private SimulationState _previousState = new();
     private EngineState _state = EngineState.Stopped;
     private PhysicsConfig _config;
 
