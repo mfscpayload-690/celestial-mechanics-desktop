@@ -34,13 +34,21 @@ namespace CelestialMechanics.Physics.Solvers;
 /// If <see cref="Vector.IsHardwareAccelerated"/> is false, delegates to
 /// <see cref="CpuSingleThreadBackend"/> for identical results.
 /// </summary>
-public sealed class SimdSingleThreadBackend : IPhysicsComputeBackend
+public sealed class SimdSingleThreadBackend : IPhysicsComputeBackend, IGravityModelAwareBackend
 {
     private readonly CpuSingleThreadBackend _scalarFallback = new();
+    public bool EnableShellTheorem { get; set; }
 
     /// <inheritdoc/>
     public void ComputeForces(BodySoA bodies, double softening)
     {
+        if (EnableShellTheorem)
+        {
+            _scalarFallback.EnableShellTheorem = true;
+            _scalarFallback.ComputeForces(bodies, softening);
+            return;
+        }
+
         if (!Vector.IsHardwareAccelerated)
         {
             _scalarFallback.ComputeForces(bodies, softening);

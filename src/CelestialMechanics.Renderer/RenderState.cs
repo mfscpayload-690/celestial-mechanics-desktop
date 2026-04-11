@@ -80,7 +80,7 @@ public class RenderState
         BodyType.Moon => new Vector4(0.7f, 0.7f, 0.7f, 1.0f),
         BodyType.Asteroid or BodyType.Comet => new Vector4(0.5f, 0.5f, 0.4f, 1.0f),
         BodyType.NeutronStar => new Vector4(0.5f, 0.8f, 1.0f, 1.0f),
-        BodyType.BlackHole => new Vector4(0.1f, 0.0f, 0.1f, 0.7f), // Darker, slightly transparent
+        BodyType.BlackHole => new Vector4(0.02f, 0.02f, 0.02f, 1.0f), // Opaque black core
         _ => new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
     };
 
@@ -95,7 +95,9 @@ public class RenderState
         BodyType.Asteroid => new Vector4(4f, 0.02f, 0.02f, 0.08f),
         BodyType.Comet => new Vector4(4f, 0.03f, 0.03f, 0.12f),
         BodyType.NeutronStar => new Vector4(5f, 1.45f, 1.3f, 0.28f),
-        BodyType.BlackHole => new Vector4(6f, 0.14f, 0.45f, 0.55f),
+        // Use 7.0 so black holes route through the dedicated BH shading branch
+        // in sphere.frag (visualType >= 6.5).
+        BodyType.BlackHole => new Vector4(7f, 0.14f, 0.45f, 0.55f),
         _ => new Vector4(1f, 0.03f, 0.03f, 0.2f),
     };
 }

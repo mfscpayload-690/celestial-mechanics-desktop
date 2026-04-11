@@ -134,7 +134,7 @@ public class ImGuiOverlay
     private void RenderSimulationControls()
     {
         ImGui.SetNextWindowPos(new Vector2(10, 10), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSize(new Vector2(320, 520), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(340, 700), ImGuiCond.FirstUseEver);
         ImGui.Begin("Simulation Controls");
 
         string stateText = _engine.State.ToString();
@@ -200,6 +200,52 @@ public class ImGuiOverlay
             _renderer.GlobalSaturation = saturation;
 
         ImGui.Separator();
+        ImGui.Text("Black Hole Visual");
+
+        bool autoQuality = _renderer.AutoBlackHoleQuality;
+        if (ImGui.Checkbox("Auto BH Quality", ref autoQuality))
+            _renderer.AutoBlackHoleQuality = autoQuality;
+
+        var qualityNames = Enum.GetNames<BlackHoleVisualQuality>();
+        int qualityIndex = (int)_renderer.BlackHoleQualityTier;
+        if (ImGui.Combo("BH Quality Tier", ref qualityIndex, qualityNames, qualityNames.Length))
+            _renderer.BlackHoleQualityTier = (BlackHoleVisualQuality)System.Math.Clamp(qualityIndex, 0, qualityNames.Length - 1);
+
+        var presetNames = Enum.GetNames<BlackHoleVisualPreset>();
+        int presetIndex = (int)_renderer.BlackHolePreset;
+        if (ImGui.Combo("BH Visual Preset", ref presetIndex, presetNames, presetNames.Length))
+            _renderer.BlackHolePreset = (BlackHoleVisualPreset)System.Math.Clamp(presetIndex, 0, presetNames.Length - 1);
+
+        float ringThickness = _renderer.BlackHoleRingThickness;
+        if (ImGui.SliderFloat("Ring Thickness", ref ringThickness, 0.08f, 1.0f, "%.2f"))
+            _renderer.BlackHoleRingThickness = ringThickness;
+
+        float lensStrength = _renderer.BlackHoleLensingStrength;
+        if (ImGui.SliderFloat("Lensing Strength", ref lensStrength, 0.0f, 2.5f, "%.2f"))
+            _renderer.BlackHoleLensingStrength = lensStrength;
+
+        float dopplerBoost = _renderer.BlackHoleDopplerBoost;
+        if (ImGui.SliderFloat("Doppler Boost", ref dopplerBoost, 0.0f, 3.0f, "%.2f"))
+            _renderer.BlackHoleDopplerBoost = dopplerBoost;
+
+        float opticalDepth = _renderer.BlackHoleOpticalDepth;
+        if (ImGui.SliderFloat("Optical Depth", ref opticalDepth, 0.0f, 4.0f, "%.2f"))
+            _renderer.BlackHoleOpticalDepth = opticalDepth;
+
+        float temperatureScale = _renderer.BlackHoleTemperatureScale;
+        if (ImGui.SliderFloat("Temperature Scale", ref temperatureScale, 0.25f, 3.0f, "%.2f"))
+            _renderer.BlackHoleTemperatureScale = temperatureScale;
+
+        float bloomScale = _renderer.BlackHoleBloomScale;
+        if (ImGui.SliderFloat("BH Bloom/Glow", ref bloomScale, 0.0f, 2.5f, "%.2f"))
+            _renderer.BlackHoleBloomScale = bloomScale;
+
+        var debugNames = Enum.GetNames<BlackHoleDebugView>();
+        int debugIndex = (int)_renderer.BlackHoleDebugMode;
+        if (ImGui.Combo("BH Debug View", ref debugIndex, debugNames, debugNames.Length))
+            _renderer.BlackHoleDebugMode = (BlackHoleDebugView)System.Math.Clamp(debugIndex, 0, debugNames.Length - 1);
+
+        ImGui.Separator();
         ImGui.Text("Physics Fidelity");
 
         var config = _engine.Config;
@@ -213,9 +259,67 @@ public class ImGuiOverlay
         }
 
         bool collisions = config.EnableCollisions;
-        if (ImGui.Checkbox("Collision Merging", ref collisions))
+        if (ImGui.Checkbox("Enable Collisions", ref collisions))
         {
             config.EnableCollisions = collisions;
+            configDirty = true;
+        }
+
+        bool accretionPhysics = config.EnableAccretionDisks;
+        if (ImGui.Checkbox("Accretion Disk Physics", ref accretionPhysics))
+        {
+            config.EnableAccretionDisks = accretionPhysics;
+            configDirty = true;
+        }
+
+        if (config.EnableAccretionDisks)
+        {
+            bool jetEmission = config.EnableJetEmission;
+            if (ImGui.Checkbox("Jet Emission", ref jetEmission))
+            {
+                config.EnableJetEmission = jetEmission;
+                configDirty = true;
+            }
+
+            float jetThreshold = (float)config.AccretionJetThreshold;
+            if (ImGui.SliderFloat("Jet Threshold", ref jetThreshold, 0.01f, 1.0f, "%.2f"))
+            {
+                config.AccretionJetThreshold = System.Math.Clamp(jetThreshold, 0.01f, 1.0f);
+                configDirty = true;
+            }
+
+            ImGui.Text($"Active Accretion Particles: {_engine.ActiveAccretionParticleCount}");
+        }
+
+        bool shellTheorem = config.EnableShellTheorem;
+        if (ImGui.Checkbox("Shell Theorem Gravity", ref shellTheorem))
+        {
+            config.EnableShellTheorem = shellTheorem;
+            configDirty = true;
+        }
+
+        var collisionModeNames = Enum.GetNames<CollisionMode>();
+        int collisionModeIndex = Array.IndexOf(collisionModeNames, config.CollisionMode.ToString());
+        collisionModeIndex = System.Math.Max(0, collisionModeIndex);
+        if (ImGui.Combo("Collision Mode", ref collisionModeIndex, collisionModeNames, collisionModeNames.Length))
+        {
+            config.CollisionMode = Enum.TryParse<CollisionMode>(collisionModeNames[collisionModeIndex], out var parsed)
+                ? parsed
+                : CollisionMode.MergeOnly;
+            configDirty = true;
+        }
+
+        float restitution = (float)config.CollisionRestitution;
+        if (ImGui.SliderFloat("Restitution", ref restitution, 0.0f, 1.0f, "%.2f"))
+        {
+            config.CollisionRestitution = System.Math.Clamp(restitution, 0.0f, 1.0f);
+            configDirty = true;
+        }
+
+        float fragmentationThreshold = (float)config.FragmentationSpecificEnergyThreshold;
+        if (ImGui.SliderFloat("Fragmentation Q*", ref fragmentationThreshold, 0.05f, 2.0f, "%.2f"))
+        {
+            config.FragmentationSpecificEnergyThreshold = System.Math.Max(0.01f, fragmentationThreshold);
             configDirty = true;
         }
 

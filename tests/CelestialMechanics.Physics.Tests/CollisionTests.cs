@@ -320,3 +320,157 @@ public class MomentumAfterMergeTests
         Assert.True(System.Math.Abs(soa.VelZ[0]) < 1e-12, "Z velocity should be zero");
     }
 }
+
+public class RealisticCollisionTests
+{
+    [Fact]
+    public void BounceOnly_HeadOnCollision_PreservesMomentum()
+    {
+        var bodies = new[]
+        {
+            new PhysicsBody(0, 4.0, new Vec3d(-0.4, 0, 0), new Vec3d(1.0, 0, 0), BodyType.Asteroid) { Radius = 0.6 },
+            new PhysicsBody(1, 2.0, new Vec3d(0.4, 0, 0), new Vec3d(-1.0, 0, 0), BodyType.Asteroid) { Radius = 0.6 },
+        };
+
+        var solver = new CelestialMechanics.Physics.Solvers.NBodySolver();
+        solver.AddForce(new CelestialMechanics.Physics.Forces.NewtonianGravity { SofteningEpsilon = 1e-4 });
+        solver.ConfigureSoA(
+            enabled: true,
+            softening: 1e-4,
+            deterministic: true,
+            enableCollisions: true,
+            collisionMode: CollisionMode.BounceOnly,
+            collisionRestitution: 0.5);
+
+        Vec3d p0 = bodies[0].Velocity * bodies[0].Mass + bodies[1].Velocity * bodies[1].Mass;
+        var state = solver.Step(bodies, 0.001);
+
+        Vec3d p1 = bodies[0].Velocity * bodies[0].Mass + bodies[1].Velocity * bodies[1].Mass;
+        double drift = (p1 - p0).Length;
+
+        Assert.Equal(1, state.CollisionCount);
+        Assert.True(drift < 1e-8, $"Momentum drift too high: {drift}");
+        Assert.True(bodies[0].IsActive && bodies[1].IsActive, "Bounce mode should not merge bodies.");
+    }
+
+    [Fact]
+    public void RealisticMode_HighEnergyImpact_EmitsFragmentationBurst()
+    {
+        var bodies = new[]
+        {
+            new PhysicsBody(0, 3.0, new Vec3d(-0.2, 0, 0), new Vec3d(15.0, 0, 0), BodyType.Asteroid) { Radius = 0.4 },
+            new PhysicsBody(1, 3.0, new Vec3d(0.2, 0, 0), new Vec3d(-15.0, 0, 0), BodyType.Asteroid) { Radius = 0.4 },
+        };
+
+        var solver = new CelestialMechanics.Physics.Solvers.NBodySolver();
+        solver.AddForce(new CelestialMechanics.Physics.Forces.NewtonianGravity { SofteningEpsilon = 1e-4 });
+        solver.ConfigureSoA(
+            enabled: true,
+            softening: 1e-4,
+            deterministic: true,
+            enableCollisions: true,
+            collisionMode: CollisionMode.Realistic,
+            fragmentationSpecificEnergyThreshold: 0.2,
+            fragmentationMassLossCap: 0.25);
+
+        var state = solver.Step(bodies, 0.001);
+
+        Assert.Equal(1, state.CollisionCount);
+        Assert.NotEmpty(state.CollisionBursts);
+        Assert.Contains(state.CollisionBursts, b => b.Outcome == CollisionOutcome.Fragmentation && b.EjectedMass > 0.0);
+        Assert.True(bodies[0].IsActive && bodies[1].IsActive, "Fragmentation should keep primary fragments active.");
+    }
+
+    [Fact]
+    public void RealisticMode_CompactSecondary_StillFeedsAccretionDisk()
+    {
+        var bodies = new[]
+        {
+            new PhysicsBody(0, 1.0, new Vec3d(0.0, 0, 0), Vec3d.Zero, BodyType.Star) { Radius = 0.7 },
+            new PhysicsBody(1, 0.2, new Vec3d(0.6, 0, 0), Vec3d.Zero, BodyType.NeutronStar) { Radius = 0.7 },
+        };
+
+        var solver = new CelestialMechanics.Physics.Solvers.NBodySolver();
+        solver.AddForce(new CelestialMechanics.Physics.Forces.NewtonianGravity { SofteningEpsilon = 1e-4 });
+        solver.ConfigureSoA(
+            enabled: true,
+            softening: 1e-4,
+            deterministic: true,
+            enableCollisions: true,
+            collisionMode: CollisionMode.Realistic,
+            enableAccretionDisks: true);
+
+        var state = solver.Step(bodies, 0.001);
+
+        Assert.Equal(1, state.CollisionCount);
+        Assert.Equal(1, state.ActiveBodyCount);
+        Assert.Contains(state.CollisionBursts, b => b.Outcome == CollisionOutcome.Accretion);
+        Assert.True(solver.GetActiveAccretionParticleCount() > 0, "Accretion outcome should spawn disk particles.");
+
+        int survivor = bodies[0].IsActive ? 0 : 1;
+        Assert.Equal(BodyType.NeutronStar, bodies[survivor].Type);
+    }
+
+    [Fact]
+    public void Detector_BroadPhaseAndBruteForce_ReturnSamePairCount()
+    {
+        var rnd = new Random(42);
+        var bodies = new PhysicsBody[160];
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            double x = (rnd.NextDouble() - 0.5) * 20.0;
+            double y = (rnd.NextDouble() - 0.5) * 20.0;
+            double z = (rnd.NextDouble() - 0.5) * 20.0;
+            bodies[i] = new PhysicsBody(i, 1.0, new Vec3d(x, y, z), Vec3d.Zero, BodyType.Asteroid)
+            {
+                Radius = 0.3,
+                IsCollidable = true,
+                IsActive = true
+            };
+        }
+
+        // Force some guaranteed overlaps.
+        bodies[1].Position = bodies[0].Position + new Vec3d(0.1, 0.0, 0.0);
+        bodies[3].Position = bodies[2].Position + new Vec3d(0.1, 0.0, 0.0);
+
+        var soa = new BodySoA(256);
+        soa.CopyFrom(bodies);
+
+        var detectorBrute = new CollisionDetector();
+        detectorBrute.Configure(useBroadPhase: false, broadPhaseThreshold: 10_000);
+        int bruteCount = detectorBrute.Detect(soa).Count;
+
+        var detectorBroad = new CollisionDetector();
+        detectorBroad.Configure(useBroadPhase: true, broadPhaseThreshold: 32);
+        int broadCount = detectorBroad.Detect(soa).Count;
+
+        Assert.Equal(bruteCount, broadCount);
+    }
+
+    [Fact]
+    public void StepAfterCollision_WithNoNewContacts_ResetsCollisionStatsAndBursts()
+    {
+        var bodies = new[]
+        {
+            new PhysicsBody(0, 2.0, new Vec3d(0.0, 0, 0), Vec3d.Zero, BodyType.Star) { Radius = 0.7 },
+            new PhysicsBody(1, 1.0, new Vec3d(0.4, 0, 0), Vec3d.Zero, BodyType.Star) { Radius = 0.7 },
+        };
+
+        var solver = new CelestialMechanics.Physics.Solvers.NBodySolver();
+        solver.AddForce(new CelestialMechanics.Physics.Forces.NewtonianGravity { SofteningEpsilon = 1e-4 });
+        solver.ConfigureSoA(
+            enabled: true,
+            softening: 1e-4,
+            deterministic: true,
+            enableCollisions: true,
+            collisionMode: CollisionMode.MergeOnly);
+
+        var first = solver.Step(bodies, 0.001);
+        Assert.Equal(1, first.CollisionCount);
+        Assert.NotEmpty(first.CollisionBursts);
+
+        var second = solver.Step(bodies, 0.001);
+        Assert.Equal(0, second.CollisionCount);
+        Assert.Empty(second.CollisionBursts);
+    }
+}

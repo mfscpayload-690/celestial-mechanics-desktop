@@ -17,9 +17,12 @@ Default launch scenario: two equal-mass bodies in a circular orbit (1 M☉ each,
 ## Features
 
 - **N-body gravity solver** — O(n²) pairwise Newtonian gravity with softening to prevent singularities
+- **Shell-theorem overlap gravity** — finite interior force for overlapping spherical bodies
 - **Three integrators** — Verlet (symplectic, default), Euler (educational), RK4 (high short-term accuracy)
 - **SoA body layout** — Structure-of-Arrays storage with `CpuSingleThreadBackend` and `CpuParallelBackend`
 - **Multithreaded force computation** — `Parallel.For` over bodies with determinism toggle
+- **Collision outcomes** — merge, bounce, and realistic outcome policy (merge/accretion/fragmentation)
+- **Collision broad-phase** — spatial-hash candidate pruning for dense scenes
 - **Energy & momentum monitoring** — real-time conservation tracking with drift percentage
 - **3D OpenGL renderer** — instanced sphere rendering, velocity arrows, procedural grid
 - **Interactive camera** — orbit, pan, zoom with smooth damping
@@ -101,6 +104,9 @@ F = G * m_i * m_j / (|r_ij|² + ε²)
 
 where `ε = 1e-4` is the softening parameter that prevents singularities at close approaches.
 
+When shell theorem mode is enabled, interior force transitions to a linear field inside a body radius,
+matched continuously to the softened exterior force at the boundary.
+
 **Units:**
 - Mass: solar masses (M☉)
 - Distance: astronomical units (AU)
@@ -139,10 +145,11 @@ Bidirectional conversion to SI units is provided via `UnitConversion`.
 - [x] `IPhysicsComputeBackend` interface — architecture ready for CUDA / compute shaders
 - [x] `PhysicsBenchmark` suite — 100 / 300 / 500 / 1000 body measurements
 - [ ] Orbital trail / trajectory visualization
-- [ ] Collision detection and merging
+- [x] Collision detection and merging
+- [x] Realistic collision outcomes (bounce, merge, fragmentation)
 - [ ] Relativistic corrections (Schwarzschild)
 - [ ] Scenario save / load
-- [ ] Barnes-Hut tree for O(n log n) scaling
+- [x] Barnes-Hut tree for O(n log n) scaling
 - [ ] SIMD vectorisation (AVX-256 / AVX-512) — SoA layout prerequisite is in place
 - [ ] CUDA backend (`CudaBackend : IPhysicsComputeBackend`)
 - [ ] OpenGL compute-shader backend (`ComputeShaderBackend : IPhysicsComputeBackend`)

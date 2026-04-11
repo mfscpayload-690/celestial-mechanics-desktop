@@ -67,6 +67,14 @@ public class SimulationEngine
             theta:                    _config.Theta,
             enableCollisions:         _config.EnableCollisions,
             useSimd:                  _config.UseSimd,
+            enableShellTheorem:       _config.EnableShellTheorem,
+            collisionMode:            _config.CollisionMode,
+            collisionRestitution:     _config.CollisionRestitution,
+            fragmentationSpecificEnergyThreshold: _config.FragmentationSpecificEnergyThreshold,
+            fragmentationMassLossCap: _config.FragmentationMassLossCap,
+            captureVelocityFactor:    _config.CaptureVelocityFactor,
+            enableCollisionBroadPhase: _config.EnableCollisionBroadPhase,
+            collisionBroadPhaseThreshold: _config.CollisionBroadPhaseThreshold,
             enablePostNewtonian:      _config.EnablePostNewtonian,
             enableAccretionDisks:     _config.EnableAccretionDisks,
             enableGravitationalWaves: _config.EnableGravitationalWaves,
@@ -121,9 +129,16 @@ public class SimulationEngine
     {
         // Single physics step (for step mode)
         double dt = ComputeDt();
-        _previousState = _currentState;
-        _currentState = _solver.Step(_bodies, dt);
-        CurrentTime += dt;
+
+        int substeps = DetermineCollisionSubsteps(dt);
+        double subDt = dt / substeps;
+
+        for (int s = 0; s < substeps; s++)
+        {
+            _previousState = _currentState;
+            _currentState = _solver.Step(_bodies, subDt);
+            CurrentTime += subDt;
+        }
     }
 
     public void Update(double frameTime)
@@ -137,10 +152,17 @@ public class SimulationEngine
         int substeps = 0;
         while (_accumulator >= dt && substeps < maxSubsteps)
         {
-            _previousState = _currentState;
-            _currentState = _solver.Step(_bodies, dt);
+            int collisionSubsteps = DetermineCollisionSubsteps(dt);
+            double subDt = dt / collisionSubsteps;
+
+            for (int s = 0; s < collisionSubsteps; s++)
+            {
+                _previousState = _currentState;
+                _currentState = _solver.Step(_bodies, subDt);
+                CurrentTime += subDt;
+            }
+
             _accumulator -= dt;
-            CurrentTime += dt;
             substeps++;
 
             // Recompute dt after each step (accelerations may have changed)
@@ -248,6 +270,55 @@ public class SimulationEngine
 
         _lastAdaptiveDt = dtClamped;
         return dtClamped;
+    }
+
+    private int DetermineCollisionSubsteps(double dt)
+    {
+        if (!_config.EnableCollisions ||
+            !_config.EnableCollisionSubstepping ||
+            dt <= 0.0)
+        {
+            return 1;
+        }
+
+        double maxSpeed = 0.0;
+        double minRadiusAny = double.MaxValue;
+        double minRadiusNonCompact = double.MaxValue;
+
+        for (int i = 0; i < _bodies.Length; i++)
+        {
+            if (!_bodies[i].IsActive || !_bodies[i].IsCollidable)
+                continue;
+
+            double speed = _bodies[i].Velocity.Length;
+            if (speed > maxSpeed) maxSpeed = speed;
+
+            double r = _bodies[i].Radius;
+            if (r > 1e-12 && r < minRadiusAny)
+                minRadiusAny = r;
+
+            bool isCompact = _bodies[i].Type == BodyType.BlackHole ||
+                             _bodies[i].Type == BodyType.NeutronStar;
+            if (!isCompact && r > 1e-12 && r < minRadiusNonCompact)
+                minRadiusNonCompact = r;
+        }
+
+        if (maxSpeed <= 1e-12 || minRadiusAny == double.MaxValue)
+            return 1;
+
+        double radiusRef = minRadiusNonCompact < double.MaxValue
+            ? minRadiusNonCompact
+            : minRadiusAny;
+
+        radiusRef = System.Math.Max(radiusRef, _config.SofteningEpsilon * 4.0);
+
+        double maxTravelPerSubstep = radiusRef * System.Math.Clamp(_config.CollisionSubstepSafetyFactor, 0.05, 1.0);
+        if (maxTravelPerSubstep <= 1e-12)
+            return 1;
+
+        double substepsNeeded = (maxSpeed * dt) / maxTravelPerSubstep;
+        int steps = (int)System.Math.Ceiling(substepsNeeded);
+        return System.Math.Clamp(steps, 1, System.Math.Max(1, _config.MaxCollisionSubsteps));
     }
 
     public void SetIntegrator(string name)

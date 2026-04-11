@@ -26,6 +26,11 @@ uniform vec4 uBlackHoles[MAX_BLACK_HOLES]; // xy=screen pos, z=Rs_screen, w=lens
 // Visual tunables
 uniform float uLensIntensity;    // Overall strength multiplier (default 1.0)
 uniform float uEventHorizonGlow; // Glow intensity at event horizon (default 0.5)
+uniform int uQualityTier;        // 0=low, 1=medium, 2=high
+uniform int uVisualPreset;       // 0=cinematic orange, 1=EHT230, 2=EHT345
+uniform float uDopplerBoost;
+uniform float uOpticalDepth;
+uniform int uDebugMode;          // 0=none, 1=horizon, 2=ring, 3=warp, 4=optical depth
 
 void main()
 {
@@ -58,9 +63,15 @@ void main()
         // Direction: toward the black hole
         float alpha = lensStr * uLensIntensity / b;
 
+        if (uQualityTier >= 1)
+            alpha *= 1.0 + 0.12 * sin(dist * 0.015);
+        if (uQualityTier >= 2)
+            alpha *= 1.0 + 0.10 * cos(dist * 0.025 + float(i));
+
         // Convert angular deflection to UV offset
         vec2 direction = -normalize(delta);
-        totalDeflection += direction * alpha;
+        float asymmetry = 1.0 + direction.x * 0.35 * uDopplerBoost;
+        totalDeflection += direction * alpha * asymmetry;
 
         // Event horizon darkening: smooth falloff at Rs
         float horizonFactor = smoothstep(rsScreen * 0.8, rsScreen * 2.0, dist);
@@ -85,14 +96,41 @@ void main()
 
     // Apply darkening near event horizons
     totalDarkening = clamp(totalDarkening, 0.0, 1.0);
+    float tau = clamp(uOpticalDepth * (0.35 + totalDarkening), 0.0, 4.0);
+    float transmittance = exp(-tau);
+    sceneColor.rgb = sceneColor.rgb * transmittance + sceneColor.rgb * (1.0 - transmittance) * 0.45;
     sceneColor.rgb *= (1.0 - totalDarkening * 0.95);
 
     // Event horizon glow (accretion emission approximation)
     if (totalDarkening > 0.5)
     {
         float glowFactor = (totalDarkening - 0.5) * 2.0 * uEventHorizonGlow;
-        vec3 glowColor = vec3(1.0, 0.6, 0.2) * glowFactor;
+        vec3 glowColor = (uVisualPreset == 0) ? vec3(1.0, 0.55, 0.15) : ((uVisualPreset == 1) ? vec3(0.95, 0.72, 0.50) : vec3(0.92, 0.98, 1.0));
+        glowColor *= glowFactor;
         sceneColor.rgb += glowColor;
+    }
+
+    if (uDebugMode == 1)
+    {
+        fragColor = vec4(vec3(totalDarkening), 1.0);
+        return;
+    }
+    if (uDebugMode == 2)
+    {
+        float ringMask = clamp(length(totalDeflection) * 350.0, 0.0, 1.0);
+        fragColor = vec4(vec3(ringMask), 1.0);
+        return;
+    }
+    if (uDebugMode == 3)
+    {
+        vec2 warp = clamp(totalDeflection * 120.0, vec2(-1.0), vec2(1.0));
+        fragColor = vec4(warp * 0.5 + 0.5, 0.0, 1.0);
+        return;
+    }
+    if (uDebugMode == 4)
+    {
+        fragColor = vec4(vec3(clamp(tau / 4.0, 0.0, 1.0)), 1.0);
+        return;
     }
 
     fragColor = sceneColor;

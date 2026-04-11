@@ -62,8 +62,10 @@ namespace CelestialMechanics.Physics.Solvers;
 /// - Pool capacity: ~4N+64 nodes for N bodies (~148 bytes per node)
 ///   For 20,000 bodies: ~11.3 MB pool, allocated once
 /// </summary>
-public sealed class BarnesHutBackend : IPhysicsComputeBackend
+public sealed class BarnesHutBackend : IPhysicsComputeBackend, IGravityModelAwareBackend
 {
+    public bool EnableShellTheorem { get; set; }
+
     // ── Configuration ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -135,6 +137,7 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
         double[] ay  = bodies.AccY;
         double[] az  = bodies.AccZ;
         double[] m   = bodies.Mass;
+        double[] rad = bodies.Radius;
         bool[]   act = bodies.IsActive;
 
         // ── Zero accelerations ────────────────────────────────────────────────
@@ -204,7 +207,8 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
 
                 double axi = 0.0, ayi = 0.0, azi = 0.0;
                 ComputeForceOnBody(nodes, root, i, px[i], py[i], pz[i],
-                                   eps2, theta2, ref axi, ref ayi, ref azi);
+                                   eps2, theta2, rad, EnableShellTheorem,
+                                   ref axi, ref ayi, ref azi);
                 ax[i] = axi;
                 ay[i] = ayi;
                 az[i] = azi;
@@ -219,7 +223,8 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
 
                 double axi = 0.0, ayi = 0.0, azi = 0.0;
                 ComputeForceOnBody(nodes, root, i, px[i], py[i], pz[i],
-                                   eps2, theta2, ref axi, ref ayi, ref azi);
+                                   eps2, theta2, rad, EnableShellTheorem,
+                                   ref axi, ref ayi, ref azi);
                 ax[i] = axi;
                 ay[i] = ayi;
                 az[i] = azi;
@@ -387,6 +392,8 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
     private static void ComputeForceOnBody(OctreeNode[] nodes, int nodeIdx,
                                             int bodyIdx, double bx, double by, double bz,
                                             double eps2, double theta2,
+                                            double[] radii,
+                                            bool enableShellTheorem,
                                             ref double axi, ref double ayi, ref double azi)
     {
         ref readonly OctreeNode node = ref nodes[nodeIdx];
@@ -405,11 +412,13 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
             // Skip self-interaction
             if (node.BodyIndex == bodyIdx) return;
 
-            // Direct force computation (same formula as brute-force backends)
-            double softDist2 = dist2 + eps2;
-            double invDist = 1.0 / System.Math.Sqrt(softDist2);
-            double invDist3 = invDist * invDist * invDist;
-            double factor = node.TotalMass * invDist3;
+            double sourceRadius = node.BodyIndex >= 0 ? radii[node.BodyIndex] : 0.0;
+            double factor = GravityKernel.AccelerationCoeffFromSource(
+                distSq: dist2,
+                sourceMass: node.TotalMass,
+                sourceRadius: sourceRadius,
+                eps2: eps2,
+                enableShellTheorem: enableShellTheorem);
 
             axi -= factor * dx;
             ayi -= factor * dy;
@@ -439,13 +448,13 @@ public sealed class BarnesHutBackend : IPhysicsComputeBackend
 
         // Node is too close or θ criterion not met — recurse into children.
         // Fixed octant order 0–7 ensures deterministic traversal.
-        if (node.Child0 != -1) ComputeForceOnBody(nodes, node.Child0, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child1 != -1) ComputeForceOnBody(nodes, node.Child1, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child2 != -1) ComputeForceOnBody(nodes, node.Child2, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child3 != -1) ComputeForceOnBody(nodes, node.Child3, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child4 != -1) ComputeForceOnBody(nodes, node.Child4, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child5 != -1) ComputeForceOnBody(nodes, node.Child5, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child6 != -1) ComputeForceOnBody(nodes, node.Child6, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
-        if (node.Child7 != -1) ComputeForceOnBody(nodes, node.Child7, bodyIdx, bx, by, bz, eps2, theta2, ref axi, ref ayi, ref azi);
+        if (node.Child0 != -1) ComputeForceOnBody(nodes, node.Child0, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child1 != -1) ComputeForceOnBody(nodes, node.Child1, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child2 != -1) ComputeForceOnBody(nodes, node.Child2, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child3 != -1) ComputeForceOnBody(nodes, node.Child3, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child4 != -1) ComputeForceOnBody(nodes, node.Child4, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child5 != -1) ComputeForceOnBody(nodes, node.Child5, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child6 != -1) ComputeForceOnBody(nodes, node.Child6, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
+        if (node.Child7 != -1) ComputeForceOnBody(nodes, node.Child7, bodyIdx, bx, by, bz, eps2, theta2, radii, enableShellTheorem, ref axi, ref ayi, ref azi);
     }
 }

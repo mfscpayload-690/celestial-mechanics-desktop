@@ -23,9 +23,22 @@ public sealed class AccretionDiskRenderer : IDisposable
     private const int FLOATS_PER_PARTICLE = 6;
     private float[] _vertexData = Array.Empty<float>();
     private int _particleCount;
+    private float _avgTemperatureNorm;
+    private float _activeParticleRatio;
+
+    // Shared visual controls for consistency with black-hole shading.
+    private int _qualityTier = 1;
+    private int _preset;
+    private float _dopplerBoost = 1.0f;
+    private float _opticalDepth = 1.0f;
+    private float _temperatureScale = 1.0f;
+    private float _bloomScale = 1.0f;
+    private int _debugMode;
 
     /// <summary>Point size scale factor (adjust for screen DPI).</summary>
     public float PointScale { get; set; } = 1.0f;
+    public float AverageTemperatureNormalized => _avgTemperatureNorm;
+    public float ActiveParticleRatio => _activeParticleRatio;
 
     public AccretionDiskRenderer(GL gl)
     {
@@ -92,6 +105,7 @@ public sealed class AccretionDiskRenderer : IDisposable
         if (!_initialized) return;
 
         _particleCount = 0;
+        float tempAccumulator = 0.0f;
 
         for (int i = 0; i < particles.Length; i++)
         {
@@ -108,8 +122,23 @@ public sealed class AccretionDiskRenderer : IDisposable
             _vertexData[offset + 3] = (float)p.Temperature;
             _vertexData[offset + 4] = (float)p.Age;
             _vertexData[offset + 5] = (float)p.MaxAge;
+            tempAccumulator += (float)p.Temperature;
             _particleCount++;
         }
+
+        if (_particleCount > 0)
+        {
+            float avgTemp = tempAccumulator / _particleCount;
+            _avgTemperatureNorm = System.Math.Clamp(System.MathF.Log(System.MathF.Max(avgTemp, 1000.0f)) / System.MathF.Log(50000.0f), 0.0f, 1.0f);
+        }
+        else
+        {
+            _avgTemperatureNorm = 0.0f;
+        }
+
+        _activeParticleRatio = _vertexData.Length > 0
+            ? System.Math.Clamp((float)_particleCount / (_vertexData.Length / FLOATS_PER_PARTICLE), 0.0f, 1.0f)
+            : 0.0f;
 
         // Upload to GPU
         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
@@ -121,6 +150,24 @@ public sealed class AccretionDiskRenderer : IDisposable
                     (nuint)(_particleCount * FLOATS_PER_PARTICLE * sizeof(float)), ptr);
             }
         }
+    }
+
+    public void ConfigureBlackHoleVisuals(
+        int qualityTier,
+        int preset,
+        float dopplerBoost,
+        float opticalDepth,
+        float temperatureScale,
+        float bloomScale,
+        int debugMode)
+    {
+        _qualityTier = System.Math.Clamp(qualityTier, 0, 2);
+        _preset = System.Math.Clamp(preset, 0, 2);
+        _dopplerBoost = System.Math.Clamp(dopplerBoost, 0.0f, 3.0f);
+        _opticalDepth = System.Math.Clamp(opticalDepth, 0.0f, 4.0f);
+        _temperatureScale = System.Math.Clamp(temperatureScale, 0.25f, 3.0f);
+        _bloomScale = System.Math.Clamp(bloomScale, 0.0f, 2.5f);
+        _debugMode = System.Math.Clamp(debugMode, 0, 4);
     }
 
     /// <summary>
@@ -139,6 +186,13 @@ public sealed class AccretionDiskRenderer : IDisposable
         _shader.Use();
         _shader.SetUniform("uViewProjection", viewProjection);
         _shader.SetUniform("uPointScale", PointScale);
+        _shader.SetUniform("uQualityTier", _qualityTier);
+        _shader.SetUniform("uVisualPreset", _preset);
+        _shader.SetUniform("uDopplerBoost", _dopplerBoost);
+        _shader.SetUniform("uOpticalDepth", _opticalDepth);
+        _shader.SetUniform("uTemperatureScale", _temperatureScale);
+        _shader.SetUniform("uBloomScale", _bloomScale);
+        _shader.SetUniform("uDebugMode", _debugMode);
 
         _gl.BindVertexArray(_vao);
         _gl.DrawArrays(PrimitiveType.Points, 0, (uint)_particleCount);

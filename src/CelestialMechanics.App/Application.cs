@@ -42,6 +42,8 @@ public class Application
         _simulationEngine = new SimulationEngine(new PhysicsConfig
         {
             EnableCollisions = true,
+            CollisionMode = CollisionMode.Realistic,
+            EnableShellTheorem = true,
             UseAdaptiveTimestep = true,
             MaxSubstepsPerFrame = 12,
             DeterministicMode = false,

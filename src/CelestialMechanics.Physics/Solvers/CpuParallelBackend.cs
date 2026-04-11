@@ -61,8 +61,10 @@ namespace CelestialMechanics.Physics.Solvers;
 /// time. Use <see cref="CpuSingleThreadBackend"/> when reproducibility is
 /// required (<c>PhysicsConfig.DeterministicMode = true</c>).
 /// </summary>
-public sealed class CpuParallelBackend : IPhysicsComputeBackend
+public sealed class CpuParallelBackend : IPhysicsComputeBackend, IGravityModelAwareBackend
 {
+    public bool EnableShellTheorem { get; set; }
+
     /// <inheritdoc/>
     public void ComputeForces(BodySoA bodies, double softening)
     {
@@ -80,6 +82,7 @@ public sealed class CpuParallelBackend : IPhysicsComputeBackend
         double[] ay  = bodies.AccY;
         double[] az  = bodies.AccZ;
         double[] m   = bodies.Mass;
+        double[] rad = bodies.Radius;
         bool[]   act = bodies.IsActive;
 
         // ── Zero accelerations ───────────────────────────────────────────────
@@ -115,19 +118,19 @@ public sealed class CpuParallelBackend : IPhysicsComputeBackend
                 double dy = yi - py[j];
                 double dz = zi - pz[j];
 
-                // ── Softened inverse-cube factor ─────────────────────────────
-                // dist² + ε² prevents divergence at r → 0 (Plummer softening).
-                double dist2    = dx * dx + dy * dy + dz * dz + eps2;
-                double invDist  = 1.0 / System.Math.Sqrt(dist2);
-                double invDist3 = invDist * invDist * invDist;
-
+                double rawDist2 = dx * dx + dy * dy + dz * dz;
                 // ── Gravitational acceleration contribution (G = 1) ──────────
-                // a_i += G·m_j / |r_ij|³ · (pos_j − pos_i)
-                //      = −m_j · invDist3 · (pos_i − pos_j)
-                double factor = m[j] * invDist3;
-                axi -= factor * dx;
-                ayi -= factor * dy;
-                azi -= factor * dz;
+                // Source is body j. Shell theorem uses source radius when enabled.
+                double coeff = GravityKernel.AccelerationCoeffFromSource(
+                    distSq: rawDist2,
+                    sourceMass: m[j],
+                    sourceRadius: rad[j],
+                    eps2: eps2,
+                    enableShellTheorem: EnableShellTheorem);
+
+                axi -= coeff * dx;
+                ayi -= coeff * dy;
+                azi -= coeff * dz;
             }
 
             // ── Single write to the shared array ─────────────────────────────

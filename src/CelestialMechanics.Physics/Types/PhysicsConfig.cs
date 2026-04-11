@@ -29,6 +29,7 @@ public class PhysicsConfig
 {
     public double TimeStep { get; set; } = 0.001;
     public double SofteningEpsilon { get; set; } = 1e-4;
+    public bool EnableShellTheorem { get; set; } = false;
     public string IntegratorName { get; set; } = "Verlet";
     public double GravityRangeScale { get; set; } = 1000.0;
 
@@ -115,6 +116,45 @@ public class PhysicsConfig
     public bool EnableCollisions { get; set; } = false;
 
     /// <summary>
+    /// Collision response strategy used when <see cref="EnableCollisions"/> is true.
+    /// </summary>
+    public CollisionMode CollisionMode { get; set; } = CollisionMode.MergeOnly;
+
+    /// <summary>
+    /// Coefficient of restitution used as a global fallback when no body-type
+    /// specific value is available.
+    /// </summary>
+    public double CollisionRestitution { get; set; } = 0.15;
+
+    /// <summary>
+    /// Specific impact energy threshold used by <see cref="CollisionMode.Realistic"/>
+    /// to switch into fragmentation behavior.
+    /// </summary>
+    public double FragmentationSpecificEnergyThreshold { get; set; } = 0.6;
+
+    /// <summary>
+    /// Maximum mass fraction converted to unresolved dust/ejecta in one
+    /// fragmentation event.
+    /// </summary>
+    public double FragmentationMassLossCap { get; set; } = 0.3;
+
+    /// <summary>
+    /// Capture criterion factor for realistic outcomes. Merge/accretion is favored
+    /// when the relative speed is below this factor times the mutual escape speed.
+    /// </summary>
+    public double CaptureVelocityFactor { get; set; } = 0.9;
+
+    /// <summary>
+    /// Enables broad-phase collision culling (spatial hash) before narrow-phase checks.
+    /// </summary>
+    public bool EnableCollisionBroadPhase { get; set; } = true;
+
+    /// <summary>
+    /// Minimum active body count required before broad-phase culling is used.
+    /// </summary>
+    public int CollisionBroadPhaseThreshold { get; set; } = 96;
+
+    /// <summary>
     /// When true, the simulation engine adjusts dt based on the maximum
     /// acceleration in the system to prevent tunneling and instability.
     /// Has no effect when <see cref="DeterministicMode"/> is true.
@@ -132,6 +172,22 @@ public class PhysicsConfig
     /// Prevents runaway catch-up loops under heavy load.
     /// </summary>
     public int MaxSubstepsPerFrame { get; set; } = 12;
+
+    /// <summary>
+    /// Enables collision-safe physics substepping based on body speed and minimum radius.
+    /// </summary>
+    public bool EnableCollisionSubstepping { get; set; } = true;
+
+    /// <summary>
+    /// Safety factor limiting per-substep travel distance to a fraction of the
+    /// smallest active collision radius.
+    /// </summary>
+    public double CollisionSubstepSafetyFactor { get; set; } = 0.3;
+
+    /// <summary>
+    /// Maximum number of collision safety substeps inside one physics tick.
+    /// </summary>
+    public int MaxCollisionSubsteps { get; set; } = 8;
 
     // ── Phase 5: SIMD ─────────────────────────────────────────────────────────
 

@@ -42,8 +42,10 @@ namespace CelestialMechanics.Physics.Solvers;
 /// on AccX[j]. The parallel backend does NOT use this trick (see
 /// <see cref="CpuParallelBackend"/> for explanation).
 /// </summary>
-public sealed class CpuSingleThreadBackend : IPhysicsComputeBackend
+public sealed class CpuSingleThreadBackend : IPhysicsComputeBackend, IGravityModelAwareBackend
 {
+    public bool EnableShellTheorem { get; set; }
+
     /// <inheritdoc/>
     public void ComputeForces(BodySoA bodies, double softening)
     {
@@ -59,6 +61,7 @@ public sealed class CpuSingleThreadBackend : IPhysicsComputeBackend
         double[] ay  = bodies.AccY;
         double[] az  = bodies.AccZ;
         double[] m   = bodies.Mass;
+        double[] rad = bodies.Radius;
         bool[]   act = bodies.IsActive;
 
         // ── Zero accelerations ─────────────────────────────────────────────────
@@ -70,63 +73,88 @@ public sealed class CpuSingleThreadBackend : IPhysicsComputeBackend
             az[i] = 0.0;
         }
 
-        // ── O(n²/2) pairwise force loop ────────────────────────────────────────
+        if (!EnableShellTheorem)
+        {
+            // ── O(n²/2) pairwise force loop (legacy Newton-3rd optimization) ───
+            for (int i = 0; i < n; i++)
+            {
+                if (!act[i]) continue;
+
+                double xi = px[i];
+                double yi = py[i];
+                double zi = pz[i];
+                double mi = m[i];
+
+                double axi = 0.0, ayi = 0.0, azi = 0.0;
+
+                for (int j = i + 1; j < n; j++)
+                {
+                    if (!act[j]) continue;
+
+                    double dx = xi - px[j];
+                    double dy = yi - py[j];
+                    double dz = zi - pz[j];
+
+                    double dist2 = dx * dx + dy * dy + dz * dz + eps2;
+                    double invDist = 1.0 / System.Math.Sqrt(dist2);
+                    double invDist3 = invDist * invDist * invDist;
+
+                    double mj = m[j];
+                    double factor_ij = mj * invDist3;
+                    double factor_ji = mi * invDist3;
+
+                    axi -= factor_ij * dx;
+                    ayi -= factor_ij * dy;
+                    azi -= factor_ij * dz;
+
+                    ax[j] += factor_ji * dx;
+                    ay[j] += factor_ji * dy;
+                    az[j] += factor_ji * dz;
+                }
+
+                ax[i] += axi;
+                ay[i] += ayi;
+                az[i] += azi;
+            }
+
+            return;
+        }
+
+        // ── O(n²) shell-theorem loop: source-radius-aware per interaction ─────
         for (int i = 0; i < n; i++)
         {
             if (!act[i]) continue;
 
-            // Pre-fetch body i's position and mass into scalars.
-            // Keeping these in local variables avoids repeated array indexing
-            // inside the inner loop, giving the JIT a chance to register-allocate them.
             double xi = px[i];
             double yi = py[i];
             double zi = pz[i];
-            double mi = m[i];
 
-            double axi = 0.0, ayi = 0.0, azi = 0.0;   // accumulate into locals
+            double axi = 0.0, ayi = 0.0, azi = 0.0;
 
-            for (int j = i + 1; j < n; j++)
+            for (int j = 0; j < n; j++)
             {
-                if (!act[j]) continue;
+                if (j == i || !act[j]) continue;
 
-                // ── Displacement vector r_ij = position_i - position_j ─────────
                 double dx = xi - px[j];
                 double dy = yi - py[j];
                 double dz = zi - pz[j];
+                double rawDist2 = dx * dx + dy * dy + dz * dz;
 
-                // ── Softened distance: r² + ε² ────────────────────────────────
-                // Softening ε prevents the denominator from going to zero when
-                // two bodies pass very close. A small constant ε adds a "plummer
-                // softening" that rounds off the potential at short range.
-                double dist2    = dx * dx + dy * dy + dz * dz + eps2;
-                double invDist  = 1.0 / System.Math.Sqrt(dist2);
-                double invDist3 = invDist * invDist * invDist;   // 1/(r²+ε²)^(3/2)
+                double coeff = GravityKernel.AccelerationCoeffFromSource(
+                    distSq: rawDist2,
+                    sourceMass: m[j],
+                    sourceRadius: rad[j],
+                    eps2: eps2,
+                    enableShellTheorem: true);
 
-                // ── Gravitational acceleration magnitude ───────────────────────
-                // G = 1 in simulation units. Force per unit mass on i from j:
-                //   a_ij = G·m_j / |r_ij|³  ·  r_ij  (directed toward j)
-                // The sign is negative because dx = pos_i - pos_j, meaning the
-                // force on i points in the -dx direction (attracted toward j).
-                double mj        = m[j];
-                double factor_ij = mj * invDist3;          // m_j / r³
-                double factor_ji = mi * invDist3;          // m_i / r³
-
-                // acc_i  += -G·m_j / r³ · (pos_i - pos_j)  →  sign: -dx
-                axi -= factor_ij * dx;
-                ayi -= factor_ij * dy;
-                azi -= factor_ij * dz;
-
-                // acc_j  += +G·m_i / r³ · (pos_i - pos_j)  →  sign: +dx  (Newton's 3rd)
-                ax[j] += factor_ji * dx;
-                ay[j] += factor_ji * dy;
-                az[j] += factor_ji * dz;
+                axi -= coeff * dx;
+                ayi -= coeff * dy;
+                azi -= coeff * dz;
             }
 
-            // Flush local accumulator back to the array once per i.
-            // This is cheaper than writing ax[i] n-i times inside the loop.
-            ax[i] += axi;
-            ay[i] += ayi;
-            az[i] += azi;
+            ax[i] = axi;
+            ay[i] = ayi;
+            az[i] = azi;
         }
     }
 }

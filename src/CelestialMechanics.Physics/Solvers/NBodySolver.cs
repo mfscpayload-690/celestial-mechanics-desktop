@@ -61,10 +61,18 @@ public class NBodySolver
     private readonly CollisionDetector _collisionDetector = new();
     private readonly CollisionResolver _collisionResolver = new();
     private bool _enableCollisions;
+    private CollisionMode _collisionMode = CollisionMode.MergeOnly;
+    private double _collisionRestitution = 0.15;
+    private double _fragmentationSpecificEnergyThreshold = 0.6;
+    private double _fragmentationMassLossCap = 0.3;
+    private double _captureVelocityFactor = 0.9;
+    private bool _enableCollisionBroadPhase = true;
+    private int _collisionBroadPhaseThreshold = 96;
 
     // ── SIMD (Phase 5) ─────────────────────────────────────────────────────
     private readonly SimdSingleThreadBackend _simdBackend = new();
     private bool _useSimd;
+    private bool _enableShellTheorem;
 
     // ── Post-Newtonian (Phase 6A) ──────────────────────────────────────────
     private readonly PostNewtonian1Correction _pnCorrection = new();
@@ -113,6 +121,7 @@ public class NBodySolver
         _useBarnesHut      = false;
         _enableCollisions    = false;
         _useSimd             = false;
+        _enableShellTheorem  = false;
         _enablePostNewtonian = false;
         _enableAccretionDisks = false;
         _enableGravitationalWaves = false;
@@ -127,6 +136,9 @@ public class NBodySolver
 
     public void AddForce(IForceCalculator force)
     {
+        if (force is NewtonianGravity ng)
+            ng.EnableShellTheorem = _enableShellTheorem;
+
         _forces.Add(force);
         _forcesCache = null;
     }
@@ -161,6 +173,14 @@ public class NBodySolver
                              bool deterministic = true, bool useParallel = false,
                              bool useBarnesHut = false, double theta = 0.5,
                              bool enableCollisions = false, bool useSimd = false,
+                             bool enableShellTheorem = false,
+                             CollisionMode collisionMode = CollisionMode.MergeOnly,
+                             double collisionRestitution = 0.15,
+                             double fragmentationSpecificEnergyThreshold = 0.6,
+                             double fragmentationMassLossCap = 0.3,
+                             double captureVelocityFactor = 0.9,
+                             bool enableCollisionBroadPhase = true,
+                             int collisionBroadPhaseThreshold = 96,
                              bool enablePostNewtonian = false,
                              bool enableAccretionDisks = false,
                              bool enableGravitationalWaves = false,
@@ -177,9 +197,31 @@ public class NBodySolver
         _theta                    = theta;
         _enableCollisions         = enableCollisions;
         _useSimd                  = useSimd;
+        _enableShellTheorem       = enableShellTheorem;
+        _collisionMode            = collisionMode;
+        _collisionRestitution     = collisionRestitution;
+        _fragmentationSpecificEnergyThreshold = fragmentationSpecificEnergyThreshold;
+        _fragmentationMassLossCap = fragmentationMassLossCap;
+        _captureVelocityFactor    = captureVelocityFactor;
+        _enableCollisionBroadPhase = enableCollisionBroadPhase;
+        _collisionBroadPhaseThreshold = collisionBroadPhaseThreshold;
         _enablePostNewtonian      = enablePostNewtonian;
         _enableAccretionDisks     = enableAccretionDisks;
         _enableGravitationalWaves = enableGravitationalWaves;
+
+        _collisionDetector.Configure(_enableCollisionBroadPhase, _collisionBroadPhaseThreshold);
+        _collisionResolver.Configure(
+            _collisionMode,
+            _collisionRestitution,
+            _fragmentationSpecificEnergyThreshold,
+            _fragmentationMassLossCap,
+            _captureVelocityFactor);
+
+        for (int i = 0; i < _forces.Count; i++)
+        {
+            if (_forces[i] is NewtonianGravity ng)
+                ng.EnableShellTheorem = _enableShellTheorem;
+        }
 
         // Lazily create accretion disk system
         if (enableAccretionDisks && _accretionDisk == null)
@@ -306,17 +348,17 @@ public class NBodySolver
         if (_enableCollisions)
         {
             var events = _collisionDetector.Detect(_soaBodies);
-            if (events.Count > 0)
-            {
-                _collisionResolver.Resolve(
-                    events,
-                    _soaBodies,
-                    bodies,
-                    dt,
-                    _currentTime,
-                    _enableAccretionDisks ? _accretionDisk : null,
-                    promoteCompactRemnants: _enableAccretionDisks);
-            }
+
+            // Always resolve once per step so per-step collision counters and
+            // burst buffers are reset even when there are zero contacts.
+            _collisionResolver.Resolve(
+                events,
+                _soaBodies,
+                bodies,
+                dt,
+                _currentTime,
+                _enableAccretionDisks ? _accretionDisk : null,
+                promoteCompactRemnants: _enableAccretionDisks);
         }
 
         _soaBodies.CopyTo(bodies);
@@ -364,6 +406,9 @@ public class NBodySolver
         {
             backend = _useParallel ? _parallelBackend : _singleThreadBackend;
         }
+
+        if (backend is IGravityModelAwareBackend gravityAware)
+            gravityAware.EnableShellTheorem = _enableShellTheorem;
 
         // Wrap with Post-Newtonian corrections if enabled (Phase 6A)
         if (_enablePostNewtonian)

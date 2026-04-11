@@ -11,6 +11,7 @@ public sealed class PhysicsConfigDTO
     // ── Core ──────────────────────────────────────────────────────────────────
     public double TimeStep           { get; set; } = 0.001;
     public double SofteningEpsilon   { get; set; } = 1e-4;
+    public bool EnableShellTheorem   { get; set; } = false;
     public string IntegratorName     { get; set; } = "Verlet";
     public double GravityRangeScale  { get; set; } = 1000.0;
 
@@ -27,9 +28,19 @@ public sealed class PhysicsConfigDTO
 
     // ── Collisions & Adaptive ─────────────────────────────────────────────────
     public bool   EnableCollisions     { get; set; } = false;
+    public string CollisionMode        { get; set; } = "MergeOnly";
+    public double CollisionRestitution { get; set; } = 0.15;
+    public double FragmentationSpecificEnergyThreshold { get; set; } = 0.6;
+    public double FragmentationMassLossCap { get; set; } = 0.3;
+    public double CaptureVelocityFactor { get; set; } = 0.9;
+    public bool   EnableCollisionBroadPhase { get; set; } = true;
+    public int    CollisionBroadPhaseThreshold { get; set; } = 96;
     public bool   UseAdaptiveTimestep  { get; set; } = false;
     public double MinDt                { get; set; } = 1e-6;
     public double MaxDt                { get; set; } = 0.01;
+    public bool   EnableCollisionSubstepping { get; set; } = true;
+    public double CollisionSubstepSafetyFactor { get; set; } = 0.3;
+    public int    MaxCollisionSubsteps { get; set; } = 8;
 
     // ── SIMD ──────────────────────────────────────────────────────────────────
     public bool UseSimd { get; set; } = false;
@@ -51,6 +62,7 @@ public sealed class PhysicsConfigDTO
     {
         TimeStep                        = cfg.TimeStep,
         SofteningEpsilon                = cfg.SofteningEpsilon,
+        EnableShellTheorem              = cfg.EnableShellTheorem,
         IntegratorName                  = cfg.IntegratorName,
         GravityRangeScale               = cfg.GravityRangeScale,
         UseSoAPath                      = cfg.UseSoAPath,
@@ -61,9 +73,19 @@ public sealed class PhysicsConfigDTO
         SofteningMode                   = cfg.SofteningMode.ToString(),
         SofteningValue                  = cfg.SofteningValue,
         EnableCollisions                = cfg.EnableCollisions,
+        CollisionMode                   = cfg.CollisionMode.ToString(),
+        CollisionRestitution            = cfg.CollisionRestitution,
+        FragmentationSpecificEnergyThreshold = cfg.FragmentationSpecificEnergyThreshold,
+        FragmentationMassLossCap        = cfg.FragmentationMassLossCap,
+        CaptureVelocityFactor           = cfg.CaptureVelocityFactor,
+        EnableCollisionBroadPhase       = cfg.EnableCollisionBroadPhase,
+        CollisionBroadPhaseThreshold    = cfg.CollisionBroadPhaseThreshold,
         UseAdaptiveTimestep             = cfg.UseAdaptiveTimestep,
         MinDt                           = cfg.MinDt,
         MaxDt                           = cfg.MaxDt,
+        EnableCollisionSubstepping      = cfg.EnableCollisionSubstepping,
+        CollisionSubstepSafetyFactor    = cfg.CollisionSubstepSafetyFactor,
+        MaxCollisionSubsteps            = cfg.MaxCollisionSubsteps,
         UseSimd                         = cfg.UseSimd,
         EnablePostNewtonian             = cfg.EnablePostNewtonian,
         EnableGravitationalLensing      = cfg.EnableGravitationalLensing,
@@ -82,10 +104,15 @@ public sealed class PhysicsConfigDTO
             ? sm
             : Physics.Types.SofteningMode.Constant;
 
+        var collisionMode = Enum.TryParse<Physics.Types.CollisionMode>(CollisionMode, out var cm)
+            ? cm
+            : Physics.Types.CollisionMode.MergeOnly;
+
         return new PhysicsConfig
         {
             TimeStep                        = TimeStep,
             SofteningEpsilon                = SofteningEpsilon,
+            EnableShellTheorem              = EnableShellTheorem,
             IntegratorName                  = IntegratorName,
             GravityRangeScale               = GravityRangeScale,
             UseSoAPath                      = UseSoAPath,
@@ -96,9 +123,19 @@ public sealed class PhysicsConfigDTO
             SofteningMode                   = mode,
             SofteningValue                  = SofteningValue,
             EnableCollisions                = EnableCollisions,
+            CollisionMode                   = collisionMode,
+            CollisionRestitution            = CollisionRestitution,
+            FragmentationSpecificEnergyThreshold = FragmentationSpecificEnergyThreshold,
+            FragmentationMassLossCap        = FragmentationMassLossCap,
+            CaptureVelocityFactor           = CaptureVelocityFactor,
+            EnableCollisionBroadPhase       = EnableCollisionBroadPhase,
+            CollisionBroadPhaseThreshold    = CollisionBroadPhaseThreshold,
             UseAdaptiveTimestep             = UseAdaptiveTimestep,
             MinDt                           = MinDt,
             MaxDt                           = MaxDt,
+            EnableCollisionSubstepping      = EnableCollisionSubstepping,
+            CollisionSubstepSafetyFactor    = CollisionSubstepSafetyFactor,
+            MaxCollisionSubsteps            = MaxCollisionSubsteps,
             UseSimd                         = UseSimd,
             EnablePostNewtonian             = EnablePostNewtonian,
             EnableGravitationalLensing      = EnableGravitationalLensing,

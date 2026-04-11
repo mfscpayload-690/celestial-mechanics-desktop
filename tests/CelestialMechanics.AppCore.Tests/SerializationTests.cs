@@ -29,9 +29,16 @@ public sealed class SerializationTests : IDisposable
         {
             TimeStep          = 0.005,
             SofteningEpsilon  = 2e-4,
+            EnableShellTheorem = true,
             UseBarnesHut      = true,
             Theta             = 0.7,
             DeterministicMode = false,
+            CollisionMode     = CollisionMode.Realistic,
+            CollisionRestitution = 0.22,
+            FragmentationSpecificEnergyThreshold = 0.55,
+            FragmentationMassLossCap = 0.25,
+            EnableCollisionBroadPhase = true,
+            CollisionBroadPhaseThreshold = 64,
             EnablePostNewtonian = true,
             MaxAccretionParticles = 3000,
         };
@@ -41,9 +48,16 @@ public sealed class SerializationTests : IDisposable
 
         Assert.Equal(original.TimeStep,               restored.TimeStep,               precision: 15);
         Assert.Equal(original.SofteningEpsilon,        restored.SofteningEpsilon,        precision: 15);
+        Assert.Equal(original.EnableShellTheorem,      restored.EnableShellTheorem);
         Assert.Equal(original.UseBarnesHut,            restored.UseBarnesHut);
         Assert.Equal(original.Theta,                   restored.Theta,                   precision: 15);
         Assert.Equal(original.DeterministicMode,       restored.DeterministicMode);
+        Assert.Equal(original.CollisionMode,           restored.CollisionMode);
+        Assert.Equal(original.CollisionRestitution,    restored.CollisionRestitution, precision: 8);
+        Assert.Equal(original.FragmentationSpecificEnergyThreshold, restored.FragmentationSpecificEnergyThreshold, precision: 8);
+        Assert.Equal(original.FragmentationMassLossCap, restored.FragmentationMassLossCap, precision: 8);
+        Assert.Equal(original.EnableCollisionBroadPhase, restored.EnableCollisionBroadPhase);
+        Assert.Equal(original.CollisionBroadPhaseThreshold, restored.CollisionBroadPhaseThreshold);
         Assert.Equal(original.EnablePostNewtonian,     restored.EnablePostNewtonian);
         Assert.Equal(original.MaxAccretionParticles,   restored.MaxAccretionParticles);
     }

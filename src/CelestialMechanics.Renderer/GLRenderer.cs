@@ -6,6 +6,29 @@ using CelestialMechanics.Physics.Extensions;
 
 namespace CelestialMechanics.Renderer;
 
+public enum BlackHoleVisualQuality
+{
+    Low = 0,
+    Medium = 1,
+    High = 2,
+}
+
+public enum BlackHoleVisualPreset
+{
+    CinematicOrange = 0,
+    Eht230 = 1,
+    Eht345 = 2,
+}
+
+public enum BlackHoleDebugView
+{
+    None = 0,
+    HorizonMask = 1,
+    RingMask = 2,
+    LensWarpField = 3,
+    OpticalDepth = 4,
+}
+
 public class GLRenderer : IDisposable
 {
     private struct CollisionFlash
@@ -52,6 +75,10 @@ public class GLRenderer : IDisposable
     private readonly List<int> _staleTrailIds = new();
     private readonly List<CollisionFlash> _collisionFlashes = new(64);
     private double _lastCollisionEventTime = double.NegativeInfinity;
+    private float _bhParticleHeat;
+    private float _bhParticleDensity;
+    private int _qualityBudgetStrikeCount;
+    private int _qualityRecoveryCount;
 
     public Camera Camera => _camera;
     public RenderState RenderState => _renderState;
@@ -65,6 +92,17 @@ public class GLRenderer : IDisposable
     public float GlobalLuminosityScale { get; set; } = 1.18f;
     public float GlobalGlowScale { get; set; } = 1.15f;
     public float GlobalSaturation { get; set; } = 1.03f;
+
+    public bool AutoBlackHoleQuality { get; set; } = true;
+    public BlackHoleVisualQuality BlackHoleQualityTier { get; set; } = BlackHoleVisualQuality.Medium;
+    public BlackHoleVisualPreset BlackHolePreset { get; set; } = BlackHoleVisualPreset.CinematicOrange;
+    public BlackHoleDebugView BlackHoleDebugMode { get; set; } = BlackHoleDebugView.None;
+    public float BlackHoleRingThickness { get; set; } = 0.55f;
+    public float BlackHoleLensingStrength { get; set; } = 1.25f;
+    public float BlackHoleDopplerBoost { get; set; } = 1.15f;
+    public float BlackHoleOpticalDepth { get; set; } = 1.4f;
+    public float BlackHoleTemperatureScale { get; set; } = 1.0f;
+    public float BlackHoleBloomScale { get; set; } = 1.25f;
 
     public void SetPlacementPreview(
         RenderBody? ghost,
@@ -163,6 +201,10 @@ public class GLRenderer : IDisposable
         _renderState.UpdateFrom(engine);
 
         AppendCollisionBursts(engine.CurrentState);
+
+        if (_renderState.BodyCount == 0 && engine.CurrentState.CollisionBursts.Count == 0)
+            _collisionFlashes.Clear();
+
         BuildCollisionEffectBodies();
 
         int compositeCount = _renderState.BodyCount + (_showGhost ? 1 : 0);
@@ -186,6 +228,8 @@ public class GLRenderer : IDisposable
                 : ReadOnlySpan<DiskParticle>.Empty;
 
             _accretionDiskRenderer.UpdateParticles(particles);
+            _bhParticleHeat = _accretionDiskRenderer.AverageTemperatureNormalized;
+            _bhParticleDensity = _accretionDiskRenderer.ActiveParticleRatio;
         }
 
         _lineRenderer.Clear();
@@ -335,6 +379,9 @@ public class GLRenderer : IDisposable
     {
         if (_gl == null) return;
 
+        if (AutoBlackHoleQuality)
+            UpdateBlackHoleQualityTier(deltaTime);
+
         _timeSeconds += deltaTime;
         UpdateCollisionFlashes(System.Math.Max(deltaTime, 1e-5f));
         _camera.Update(deltaTime);
@@ -382,6 +429,17 @@ public class GLRenderer : IDisposable
         _sphereShader.SetUniform("uGlobalLuminosity", GlobalLuminosityScale);
         _sphereShader.SetUniform("uGlobalGlow", GlobalGlowScale);
         _sphereShader.SetUniform("uGlobalSaturation", GlobalSaturation);
+        _sphereShader.SetUniform("uBhQualityTier", (int)BlackHoleQualityTier);
+        _sphereShader.SetUniform("uBhPreset", (int)BlackHolePreset);
+        _sphereShader.SetUniform("uBhRingThickness", System.Math.Clamp(BlackHoleRingThickness, 0.08f, 1.0f));
+        _sphereShader.SetUniform("uBhLensStrength", System.Math.Clamp(BlackHoleLensingStrength, 0.0f, 2.5f));
+        _sphereShader.SetUniform("uBhDopplerBoost", System.Math.Clamp(BlackHoleDopplerBoost, 0.0f, 3.0f));
+        _sphereShader.SetUniform("uBhOpticalDepth", System.Math.Clamp(BlackHoleOpticalDepth, 0.0f, 4.0f));
+        _sphereShader.SetUniform("uBhTemperatureScale", System.Math.Clamp(BlackHoleTemperatureScale, 0.25f, 3.0f));
+        _sphereShader.SetUniform("uBhBloomScale", System.Math.Clamp(BlackHoleBloomScale, 0.0f, 2.5f));
+        _sphereShader.SetUniform("uBhDebugMode", (int)BlackHoleDebugMode);
+        _sphereShader.SetUniform("uBhParticleHeat", System.Math.Clamp(_bhParticleHeat, 0.0f, 1.0f));
+        _sphereShader.SetUniform("uBhParticleDensity", System.Math.Clamp(_bhParticleDensity, 0.0f, 1.0f));
         _sphereRenderer.Render(_gl, _sphereShader);
         _gl.Disable(EnableCap.Blend);
 
@@ -398,6 +456,14 @@ public class GLRenderer : IDisposable
         if (ShowAccretionDisks && _accretionDiskRenderer != null)
         {
             var viewProjection = view * projection;
+            _accretionDiskRenderer.ConfigureBlackHoleVisuals(
+                qualityTier: (int)BlackHoleQualityTier,
+                preset: (int)BlackHolePreset,
+                dopplerBoost: System.Math.Clamp(BlackHoleDopplerBoost, 0.0f, 3.0f),
+                opticalDepth: System.Math.Clamp(BlackHoleOpticalDepth, 0.0f, 4.0f),
+                temperatureScale: System.Math.Clamp(BlackHoleTemperatureScale, 0.25f, 3.0f),
+                bloomScale: System.Math.Clamp(BlackHoleBloomScale, 0.0f, 2.5f),
+                debugMode: (int)BlackHoleDebugMode);
             _accretionDiskRenderer.Draw(viewProjection);
         }
 
@@ -530,6 +596,47 @@ public class GLRenderer : IDisposable
         BodyType.BlackHole => new Vector4(0.75f, 0.6f, 1.0f, 0.35f),
         _ => new Vector4(0.85f, 0.85f, 0.85f, 0.3f),
     };
+
+    private void UpdateBlackHoleQualityTier(float deltaTime)
+    {
+        if (deltaTime <= 0.0f)
+            return;
+
+        // Target per-tier frame-cost budgets (ms) for black-hole effects.
+        float budgetMs = BlackHoleQualityTier switch
+        {
+            BlackHoleVisualQuality.Low => 0.6f,
+            BlackHoleVisualQuality.Medium => 1.2f,
+            _ => 2.5f,
+        };
+
+        // Approximate local budget pressure from frame delta.
+        float frameMs = deltaTime * 1000.0f;
+        float pressure = frameMs * 0.18f;
+
+        if (pressure > budgetMs)
+        {
+            _qualityBudgetStrikeCount++;
+            _qualityRecoveryCount = 0;
+        }
+        else
+        {
+            _qualityRecoveryCount++;
+            _qualityBudgetStrikeCount = System.Math.Max(0, _qualityBudgetStrikeCount - 1);
+        }
+
+        if (_qualityBudgetStrikeCount > 60 && BlackHoleQualityTier > BlackHoleVisualQuality.Low)
+        {
+            BlackHoleQualityTier = (BlackHoleVisualQuality)((int)BlackHoleQualityTier - 1);
+            _qualityBudgetStrikeCount = 0;
+            _qualityRecoveryCount = 0;
+        }
+        else if (_qualityRecoveryCount > 480 && BlackHoleQualityTier < BlackHoleVisualQuality.High)
+        {
+            BlackHoleQualityTier = (BlackHoleVisualQuality)((int)BlackHoleQualityTier + 1);
+            _qualityRecoveryCount = 0;
+        }
+    }
 
     public void Dispose()
     {
