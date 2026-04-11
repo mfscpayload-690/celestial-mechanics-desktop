@@ -116,8 +116,11 @@ public class Application
 
         HandleInteractivePlacement();
 
+        double scaledDeltaTime = deltaTime * _imGuiOverlay.TimeScaleMultiplier;
+        _imGuiOverlay.ApplyEnvironmentEffects(scaledDeltaTime);
+
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        _simulationEngine.Update(deltaTime);
+        _simulationEngine.Update(scaledDeltaTime);
         sw.Stop();
         _lastPhysicsTime = sw.Elapsed.TotalMilliseconds;
 
