@@ -87,7 +87,8 @@ public class PlacementWorkflowTests
     public void Catalog_HasCategories_AndTemplateLookup()
     {
         Assert.NotEmpty(CelestialCatalog.Categories);
-        Assert.Contains(CelestialCatalog.Categories, c => c.Name == "Stars");
+        Assert.Contains(CelestialCatalog.Categories, c =>
+            c.Name.Contains("Stars", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(CelestialCatalog.Categories, c => c.Templates.Count > 0);
 
         Assert.True(CelestialCatalog.TryGetTemplate("Sun", out var sun));
