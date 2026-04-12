@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>CelestialMechanics.Desktop</RootNamespace>
+    <AssemblyName>CelestialMechanics.Desktop</AssemblyName>
+    
+    <!-- Application Icon - will be embedded in exe -->
+    <ApplicationIcon Condition="Exists('app.ico')">app.ico</ApplicationIcon>
+    
+    <!-- Assembly Information -->
+    <Product>Celestial Mechanics</Product>
+    <Company>Celestial Mechanics Project</Company>
+    <Description>A 3D celestial mechanics simulation application</Description>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    
+    <!-- Application manifest for SEC-12 compliance -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    
+    <!-- SEC-01: Lock NuGet restore to deterministic package graph -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    
+    <!-- Keep project buildable as a referenced desktop assembly.
+         Publish-specific flags are passed via dotnet publish command. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CelestialMechanics.AppCore\CelestialMechanics.AppCore.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Renderer\CelestialMechanics.Renderer.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Simulation\CelestialMechanics.Simulation.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Physics\CelestialMechanics.Physics.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Math\CelestialMechanics.Math.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.Data\CelestialMechanics.Data.csproj" />
+  </ItemGroup>
+
+  <!-- NuGet packages — exact versions pinned, no floating -->
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WPF" Version="2.0.0-rc3.3" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+  </ItemGroup>
+
+  <!-- Copy nebula background to output -->
+  <ItemGroup>
+    <Content Include="Assets\nebula_bg.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Pre-publish target to detect and kill the running process to prevent MSB4018 -->
+  <Target Name="KillRunningApp" BeforeTargets="PrepareForPublish">
+    <Message Importance="high" Text="Checking for running instances of $(AssemblyName).exe to prevent file locks..." />
+    <Exec Command="powershell -NoProfile -Command &quot;try { Stop-Process -Name $(AssemblyName) -Force -ErrorAction SilentlyContinue } catch { } exit 0&quot;" Condition="'$(OS)' == 'Windows_NT'" ContinueOnError="true" />
+  </Target>
+
+  <!-- Copy shaders from Renderer project to output directory -->
+  <ItemGroup>
+    <Content Include="..\CelestialMechanics.Renderer\Shaders\**\*.vert">
+      <Link>Shaders\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\CelestialMechanics.Renderer\Shaders\**\*.frag">
+      <Link>Shaders\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

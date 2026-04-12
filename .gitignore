@@ -70,3 +70,6 @@ publish_log*.txt
 
 # Alternate build intermediates
 **/obj_alt/
+
+stderr.txt
+stdout.txt

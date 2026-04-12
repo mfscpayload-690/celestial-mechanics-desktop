@@ -1,0 +1,245 @@
+<Window x:Class="CelestialMechanics.Desktop.Views.SplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        WindowState="Maximized"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        Title="Celestial Mechanics">
+
+    <Window.Resources>
+        <!-- ═══════════════════════════════════════════════════════
+             SPLASH STORYBOARD — Single orchestrated sequence.
+             All timings use BeginTime offsets. No Thread.Sleep.
+             Motion: CubicEase / QuinticEase only.
+             ═══════════════════════════════════════════════════════ -->
+        <Storyboard x:Key="SplashStoryboard">
+
+            <!-- ── T=0.0s  Title: FadeIn (Opacity 0→1, 800ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="TitleBlock"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.8"
+                             BeginTime="0:0:0">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=0.0s  Title: SlideUp (Y 20→0, 800ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="TitleTransform"
+                             Storyboard.TargetProperty="Y"
+                             From="20" To="0" Duration="0:0:0.8"
+                             BeginTime="0:0:0">
+                <DoubleAnimation.EasingFunction>
+                    <QuinticEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=0.5s  Title glow shadow pulse ── -->
+            <DoubleAnimation Storyboard.TargetName="TitleGlow"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.4" To="1.0" Duration="0:0:2.0"
+                             BeginTime="0:0:0.5"
+                             AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseInOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=1.0s  Horizontal rule grows (Width 0→320, 600ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="HorizontalRule"
+                             Storyboard.TargetProperty="Width"
+                             From="0" To="320" Duration="0:0:0.6"
+                             BeginTime="0:0:1.0">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation Storyboard.TargetName="HorizontalRule"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.3"
+                             BeginTime="0:0:1.0">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=1.2s  Tagline: FadeIn (0→1, 700ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="TaglineBlock"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.7"
+                             BeginTime="0:0:1.2">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=1.2s  Tagline: SlideUp (12→0, 700ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="TaglineTransform"
+                             Storyboard.TargetProperty="Y"
+                             From="12" To="0" Duration="0:0:0.7"
+                             BeginTime="0:0:1.2">
+                <DoubleAnimation.EasingFunction>
+                    <QuinticEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=1.8s  Loading dots: FadeIn (0→1, 400ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="LoadingDots"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.4"
+                             BeginTime="0:0:1.8">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=1.8s  Dot 1 pulse (infinite) ── -->
+            <DoubleAnimation Storyboard.TargetName="Dot1"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.2" To="1.0" Duration="0:0:0.6"
+                             BeginTime="0:0:1.8"
+                             AutoReverse="True"
+                             RepeatBehavior="2x">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseInOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=2.0s  Dot 2 pulse (200ms offset) ── -->
+            <DoubleAnimation Storyboard.TargetName="Dot2"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.2" To="1.0" Duration="0:0:0.6"
+                             BeginTime="0:0:2.0"
+                             AutoReverse="True"
+                             RepeatBehavior="2x">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseInOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=2.2s  Dot 3 pulse (400ms offset) ── -->
+            <DoubleAnimation Storyboard.TargetName="Dot3"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.2" To="1.0" Duration="0:0:0.6"
+                             BeginTime="0:0:2.2"
+                             AutoReverse="True"
+                             RepeatBehavior="2x">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseInOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=4.5s  Everything FadeOut (500ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="RootGrid"
+                             Storyboard.TargetProperty="Opacity"
+                             From="1" To="0" Duration="0:0:0.5"
+                             BeginTime="0:0:4.5">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseIn"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+        </Storyboard>
+    </Window.Resources>
+
+    <!-- Root grid with deep space background -->
+    <Grid x:Name="RootGrid" Background="{StaticResource BgPrimaryBrush}">
+
+        <!-- Starfield canvas — 120 procedural stars populated in code-behind -->
+        <Canvas x:Name="StarCanvas" IsHitTestVisible="False"/>
+
+        <!-- Subtle radial vignette overlay for depth -->
+        <Border IsHitTestVisible="False">
+            <Border.Background>
+                <RadialGradientBrush Center="0.5,0.5" RadiusX="0.7" RadiusY="0.7">
+                    <GradientStop Color="Transparent" Offset="0"/>
+                    <GradientStop Color="#40070B12" Offset="0.85"/>
+                    <GradientStop Color="#AA070B12" Offset="1"/>
+                </RadialGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- Center composition -->
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+
+            <!-- ═══ Element 1: Title ═══
+                 52px, FontWeight=Thin(300), letter-spacing +4px, AccentGold
+                 DropShadow: AccentOrangeGlow, blur=28, pulses via storyboard -->
+            <TextBlock x:Name="TitleBlock"
+                       Text="CELESTIAL MECHANICS"
+                       FontSize="52" FontWeight="Thin"
+                       FontFamily="Segoe UI"
+                       Foreground="{StaticResource AccentGoldBrush}"
+                       HorizontalAlignment="Center"
+                       Opacity="0">
+                <!-- Letter-spacing: WPF doesn't have direct CharacterSpacing,
+                     so we use a workaround via TextBlock.TextEffects or
+                     set it in code-behind. Here we approximate with padding
+                     on a custom arrangement. Applied in code-behind. -->
+                <TextBlock.Effect>
+                    <DropShadowEffect x:Name="TitleGlow"
+                                     Color="{StaticResource AccentOrangeGlow}"
+                                     BlurRadius="28"
+                                     ShadowDepth="0"
+                                     Opacity="0.4"
+                                     Direction="0"/>
+                </TextBlock.Effect>
+                <TextBlock.RenderTransform>
+                    <TranslateTransform x:Name="TitleTransform" Y="20"/>
+                </TextBlock.RenderTransform>
+            </TextBlock>
+
+            <!-- ═══ Element 2: Horizontal rule ═══
+                 1px, 320px wide, gradient transparent→AccentOrange→transparent
+                 Grows from 0→320px width over 600ms -->
+            <Rectangle x:Name="HorizontalRule"
+                       Height="1" Width="0"
+                       HorizontalAlignment="Center"
+                       Margin="0,18,0,18"
+                       Opacity="0">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="Transparent" Offset="0"/>
+                        <GradientStop Color="{StaticResource AccentOrange}" Offset="0.5"/>
+                        <GradientStop Color="Transparent" Offset="1"/>
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+            </Rectangle>
+
+            <!-- ═══ Element 3: Tagline ═══
+                 18px, FontWeight=Light, TextSecondary, letter-spacing +2px -->
+            <TextBlock x:Name="TaglineBlock"
+                       Text="Solution for Cosmic Simulations"
+                       FontSize="18" FontWeight="Light"
+                       FontFamily="Segoe UI"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       HorizontalAlignment="Center"
+                       Opacity="0">
+                <TextBlock.RenderTransform>
+                    <TranslateTransform x:Name="TaglineTransform" Y="12"/>
+                </TextBlock.RenderTransform>
+            </TextBlock>
+
+            <!-- ═══ Element 4: Loading dots ═══
+                 Three 6px AccentOrange ellipses, 16px apart -->
+            <StackPanel x:Name="LoadingDots"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        Margin="0,28,0,0"
+                        Opacity="0">
+                <Ellipse x:Name="Dot1" Width="6" Height="6"
+                         Fill="{StaticResource AccentOrangeBrush}"
+                         Margin="0,0,16,0" Opacity="0.2"/>
+                <Ellipse x:Name="Dot2" Width="6" Height="6"
+                         Fill="{StaticResource AccentOrangeBrush}"
+                         Margin="0,0,16,0" Opacity="0.2"/>
+                <Ellipse x:Name="Dot3" Width="6" Height="6"
+                         Fill="{StaticResource AccentOrangeBrush}"
+                         Opacity="0.2"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
