@@ -1,0 +1,134 @@
+<UserControl x:Class="CelestialMechanics.Desktop.Views.WelcomeOverlay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ═══════════════════════════════════════════════════
+         WELCOME MOMENT OVERLAY
+         3.5s non-skippable animation: particle → quote → fadeout
+         All motion: CubicEase / QuinticEase only.
+         ═══════════════════════════════════════════════════ -->
+
+    <UserControl.Resources>
+        <Storyboard x:Key="WelcomeStoryboard">
+
+            <!-- ── T=0.0s  Glowing particle: FadeIn + Scale 0→1 (600ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="GlowParticle"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.6"
+                             BeginTime="0:0:0">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation Storyboard.TargetName="ParticleScale"
+                             Storyboard.TargetProperty="ScaleX"
+                             From="0" To="1" Duration="0:0:0.6"
+                             BeginTime="0:0:0">
+                <DoubleAnimation.EasingFunction>
+                    <QuinticEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation Storyboard.TargetName="ParticleScale"
+                             Storyboard.TargetProperty="ScaleY"
+                             From="0" To="1" Duration="0:0:0.6"
+                             BeginTime="0:0:0">
+                <DoubleAnimation.EasingFunction>
+                    <QuinticEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=0.5s  Glow pulse once (0.6→1.0→0.6, 800ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="ParticleGlow"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.6" To="1.0" Duration="0:0:0.4"
+                             BeginTime="0:0:0.5"
+                             AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseInOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=1.0s  Quote: FadeIn (0→1, 600ms) + SlideUp (16→0) ── -->
+            <DoubleAnimation Storyboard.TargetName="QuoteBlock"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.6"
+                             BeginTime="0:0:1.0">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+            <DoubleAnimation Storyboard.TargetName="QuoteTransform"
+                             Storyboard.TargetProperty="Y"
+                             From="16" To="0" Duration="0:0:0.6"
+                             BeginTime="0:0:1.0">
+                <DoubleAnimation.EasingFunction>
+                    <QuinticEase EasingMode="EaseOut"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- ── T=3.0s  Everything fades out (500ms) ── -->
+            <DoubleAnimation Storyboard.TargetName="OverlayRoot"
+                             Storyboard.TargetProperty="Opacity"
+                             From="1" To="0" Duration="0:0:0.5"
+                             BeginTime="0:0:3.0">
+                <DoubleAnimation.EasingFunction>
+                    <CubicEase EasingMode="EaseIn"/>
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+        </Storyboard>
+    </UserControl.Resources>
+
+    <Grid x:Name="OverlayRoot">
+        <!-- 95% opacity deep space background -->
+        <Border Opacity="0.95" Background="{StaticResource BgPrimaryBrush}"
+                IsHitTestVisible="False"/>
+
+        <!-- Center composition -->
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+
+            <!-- Glowing particle: 8px AccentOrange, DropShadow blur=32 -->
+            <Ellipse x:Name="GlowParticle"
+                     Width="8" Height="8"
+                     Fill="{StaticResource AccentOrangeBrush}"
+                     HorizontalAlignment="Center"
+                     Margin="0,0,0,24"
+                     Opacity="0"
+                     RenderTransformOrigin="0.5,0.5">
+                <Ellipse.Effect>
+                    <DropShadowEffect x:Name="ParticleGlow"
+                                     Color="{StaticResource AccentOrangeGlow}"
+                                     BlurRadius="32" ShadowDepth="0" Opacity="0.9"
+                                     Direction="0"/>
+                </Ellipse.Effect>
+                <Ellipse.RenderTransform>
+                    <ScaleTransform x:Name="ParticleScale" ScaleX="0" ScaleY="0"/>
+                </Ellipse.RenderTransform>
+            </Ellipse>
+
+            <!-- Quote text -->
+            <StackPanel x:Name="QuoteBlock" Opacity="0"
+                        HorizontalAlignment="Center">
+                <TextBlock Text="My favorite constellation is the one where we meet"
+                           FontSize="22" FontWeight="Light"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           HorizontalAlignment="Center"
+                           FontFamily="Segoe UI"/>
+
+                <!-- Heart+arrow: SVG path fallback for WPF emoji rendering -->
+                <Canvas Width="24" Height="24" HorizontalAlignment="Center" Margin="0,12,0,0">
+                    <!-- Heart shape -->
+                    <Path Data="M 12 21 C 12 21 3 14 3 8.5 C 3 5.4 5.4 3 8.5 3 C 10.3 3 11.8 4 12 5.1 C 12.2 4 13.7 3 15.5 3 C 18.6 3 21 5.4 21 8.5 C 21 14 12 21 12 21 Z"
+                          Fill="{StaticResource AccentOrangeBrush}" Opacity="0.9"/>
+                    <!-- Arrow through heart -->
+                    <Line X1="1" Y1="16" X2="22" Y2="6"
+                          Stroke="{StaticResource AccentGoldBrush}" StrokeThickness="1.5"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Triangle"/>
+                </Canvas>
+
+                <StackPanel.RenderTransform>
+                    <TranslateTransform x:Name="QuoteTransform" Y="16"/>
+                </StackPanel.RenderTransform>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</UserControl>

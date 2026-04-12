@@ -1,0 +1,216 @@
+<UserControl x:Class="CelestialMechanics.Desktop.Views.Panels.BodyTypePalette"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Border Background="{StaticResource ControlBarBackground}"
+            BorderBrush="{StaticResource BorderPrimary}"
+            BorderThickness="0,0,0,1"
+            Height="48">
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+
+            <TextBlock Text="Body Type:"
+                       Foreground="{StaticResource TextSecondaryBrush}"
+                       FontSize="11"
+                       VerticalAlignment="Center"
+                       Margin="0,0,10,0"/>
+
+            <!-- Star Category -->
+            <ToggleButton x:Name="StarToggle" Content="★ Stars"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="Star"/>
+            <Popup PlacementTarget="{Binding ElementName=StarToggle}"
+                   Placement="Bottom"
+                   StaysOpen="False"
+                   IsOpen="{Binding ElementName=StarToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="StarSubtypes" ItemsSource="{Binding}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- Planet Category -->
+            <ToggleButton x:Name="PlanetToggle" Content="● Planets"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="Planet"/>
+            <Popup PlacementTarget="{Binding ElementName=PlanetToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=PlanetToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="PlanetSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- GasGiant Category -->
+            <ToggleButton x:Name="GasGiantToggle" Content="◉ Gas Giants"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="GasGiant"/>
+            <Popup PlacementTarget="{Binding ElementName=GasGiantToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=GasGiantToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="GasGiantSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- RockyPlanet Category -->
+            <ToggleButton x:Name="RockyToggle" Content="▪ Rocky"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="RockyPlanet"/>
+            <Popup PlacementTarget="{Binding ElementName=RockyToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=RockyToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="RockySubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- Moon Category -->
+            <ToggleButton x:Name="MoonToggle" Content="◦ Moon"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="Moon"/>
+            <Popup PlacementTarget="{Binding ElementName=MoonToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=MoonToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="MoonSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- Asteroid Category -->
+            <ToggleButton x:Name="AsteroidToggle" Content="◇ Asteroid"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="Asteroid"/>
+            <Popup PlacementTarget="{Binding ElementName=AsteroidToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=AsteroidToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="AsteroidSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- NeutronStar Category -->
+            <ToggleButton x:Name="NeutronToggle" Content="✦ Neutron"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="NeutronStar"/>
+            <Popup PlacementTarget="{Binding ElementName=NeutronToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=NeutronToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="NeutronSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- BlackHole Category -->
+            <ToggleButton x:Name="BlackHoleToggle" Content="◯ Black Hole"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="BlackHole"/>
+            <Popup PlacementTarget="{Binding ElementName=BlackHoleToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=BlackHoleToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="BlackHoleSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- Comet Category -->
+            <ToggleButton x:Name="CometToggle" Content="☄ Comet"
+                          Style="{StaticResource BodyTypeCategoryButtonStyle}"
+                          Tag="Comet"/>
+            <Popup PlacementTarget="{Binding ElementName=CometToggle}"
+                   Placement="Bottom" StaysOpen="False"
+                   IsOpen="{Binding ElementName=CometToggle, Path=IsChecked, Mode=TwoWay}"
+                   AllowsTransparency="True">
+                <Border Background="{StaticResource BackgroundSecondary}"
+                        BorderBrush="{StaticResource BorderPrimary}"
+                        BorderThickness="1" CornerRadius="4" Padding="4">
+                    <ItemsControl x:Name="CometSubtypes">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel MaxWidth="400"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </Border>
+            </Popup>
+
+            <!-- Custom Category -->
+            <Button Content="◈ Custom"
+                    Style="{StaticResource BodyTypePaletteButtonStyle}"
+                    Tag="Custom"/>
+
+        </StackPanel>
+    </Border>
+</UserControl>
