@@ -174,6 +174,12 @@ public class PhysicsConfig
     public int MaxSubstepsPerFrame { get; set; } = 12;
 
     /// <summary>
+    /// Optional multiplier for max substeps per frame, used by UI time-flow controls.
+    /// Defaults to 1.0 so simulation behavior and tests remain unchanged unless set.
+    /// </summary>
+    public double TimeFlowSubstepBoost { get; set; } = 1.0;
+
+    /// <summary>
     /// Enables collision-safe physics substepping based on body speed and minimum radius.
     /// </summary>
     public bool EnableCollisionSubstepping { get; set; } = true;

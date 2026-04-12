@@ -10,12 +10,16 @@ public class InputHandler
     private bool _rightMouseDown;
     private System.Numerics.Vector2 _lastMousePos;
     private bool _leftClickThisFrame;
+    private bool _leftReleasedThisFrame;
     private bool _rightClickThisFrame;
 
     public bool BlockCameraMouseControls { get; set; }
     public System.Numerics.Vector2 MousePosition { get; private set; }
     public bool LeftClickThisFrame => _leftClickThisFrame;
+    public bool LeftReleasedThisFrame => _leftReleasedThisFrame;
     public bool RightClickThisFrame => _rightClickThisFrame;
+    public bool IsLeftMouseDown => _leftMouseDown;
+    public bool IsRightMouseDown => _rightMouseDown;
 
     public event Action? OnToggleSimulation;  // Space
     public event Action? OnStepSimulation;    // Right arrow
@@ -85,7 +89,10 @@ public class InputHandler
         MousePosition = new System.Numerics.Vector2(mouse.Position.X, mouse.Position.Y);
 
         if (button == MouseButton.Left)
+        {
             _leftMouseDown = false;
+            _leftReleasedThisFrame = true;
+        }
         else if (button == MouseButton.Right)
             _rightMouseDown = false;
     }
@@ -131,6 +138,7 @@ public class InputHandler
     public void EndFrame()
     {
         _leftClickThisFrame = false;
+        _leftReleasedThisFrame = false;
         _rightClickThisFrame = false;
     }
 }

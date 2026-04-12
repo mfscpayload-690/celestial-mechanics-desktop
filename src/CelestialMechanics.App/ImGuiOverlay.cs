@@ -1,5 +1,6 @@
 using ImGuiNET;
 using CelestialMechanics.Simulation;
+using CelestialMechanics.Simulation.Analysis;
 using CelestialMechanics.Renderer;
 using CelestialMechanics.Physics.Types;
 using CelestialMechanics.Math;
@@ -12,6 +13,9 @@ namespace CelestialMechanics.App;
 
 public class ImGuiOverlay
 {
+    private const float AnalysisModeMaxTimeFlowValue = 1000f;
+    private const int AnalysisModeMinPredictionSteps = 256;
+
     private enum ControlMenuMode
     {
         None,
@@ -21,6 +25,8 @@ public class ImGuiOverlay
 
     private readonly SimulationEngine _engine;
     private readonly GLRenderer _renderer;
+    private readonly ISelectionContext _selectionContext;
+    private readonly Action _resetSimulation;
     private int _selectedIntegrator = 1; // 0=Euler, 1=Verlet, 2=RK4
     private readonly string[] _integratorNames = { "Euler", "Verlet", "RK4" };
 
@@ -28,6 +34,7 @@ public class ImGuiOverlay
     private readonly float[] _energyHistory = new float[200];
     private int _energyHistoryIndex;
     private double _initialEnergy = double.NaN;
+    private double _initialMomentumMagnitude = double.NaN;
 
     // Add body state
     private int _selectedCategory;
@@ -40,6 +47,10 @@ public class ImGuiOverlay
     private readonly IReadOnlyList<AddMenuEntry> _addEntries = CelestialAddMenuCatalog.Entries;
     private bool _interactivePlacementEnabled;
     private readonly PlacementStateMachine _placement = new();
+    private bool _followSelectedBody;
+    private int _orbitCentralBodySelection;
+    private int _orbitTypeSelection;
+    private float _orbitEccentricity = 0.2f;
 
     // Bottom control panel state
     private ControlMenuMode _menuMode = ControlMenuMode.None;
@@ -51,6 +62,7 @@ public class ImGuiOverlay
     private bool _showIntegrator = true;
     private bool _showAddBody = true;
     private bool _showBodyInspector = true;
+    private bool _showSimulationInsights = true;
 
     // Add menu hierarchy state
     private int _selectedAddTopCategory;
@@ -77,6 +89,13 @@ public class ImGuiOverlay
 
     // Body inspector
     private int _selectedBodyIndex = -1;
+    private bool _useAutoCentralBody = true;
+    private int _selectedCentralBodyId = -1;
+    private bool _measurementMode;
+    private int _measurementTargetIndex;
+    private bool _showPredictedTrajectory = true;
+    private int _predictionSteps = 180;
+    private bool _highPrecisionPrediction;
 
     // FPS tracking
     private readonly float[] _fpsHistory = new float[120];
@@ -84,11 +103,16 @@ public class ImGuiOverlay
     private float _fpsAccumulator;
     private int _fpsFrameCount;
     private float _displayedFps;
+    private ApplicationMode _mode = ApplicationMode.Simulation;
 
-    public ImGuiOverlay(SimulationEngine engine, GLRenderer renderer)
+    public ImGuiOverlay(SimulationEngine engine, GLRenderer renderer, ISelectionContext selectionContext, Action? resetSimulation = null)
     {
         _engine = engine;
         _renderer = renderer;
+        _selectionContext = selectionContext;
+        _resetSimulation = resetSimulation ?? (() => _engine.Stop());
+        _renderer.ShowPredictedTrajectory = _showPredictedTrajectory;
+        _renderer.PredictionSteps = _predictionSteps;
         ImGui.StyleColorsDark();
 
         // Apply custom styling
@@ -130,7 +154,56 @@ public class ImGuiOverlay
     public double DirectionSpeedScale => _directionSpeedScale;
     public double DirectionMinSpeed => _directionMinSpeed;
     public double DirectionMaxSpeed => _directionMaxSpeed;
-    public double TimeScaleMultiplier => System.Math.Clamp(_timeFlowValue / 100.0f, 0.01f, 100.0f);
+    public double TimeScaleMultiplier => System.Math.Clamp(_timeFlowValue / 100.0f, 0.01f, 1000.0f);
+    public float TimeFlowValue => _timeFlowValue;
+    public bool ShowSimulationControlsPanel => _showSimulationControls;
+    public bool ShowEnergyMonitorPanel => _showEnergyMonitor;
+    public bool ShowPerformancePanel => _showPerformance;
+    public bool ShowIntegratorPanel => _showIntegrator;
+    public bool ShowAddBodyPanel => _showAddBody;
+    public bool ShowBodyInspectorPanel => _showBodyInspector;
+    public bool ShowSimulationInsightsPanel => _showSimulationInsights;
+    public bool FollowSelectedBody
+    {
+        get => _followSelectedBody;
+        set => _followSelectedBody = value;
+    }
+
+    public ApplicationMode Mode
+    {
+        get => _mode;
+        set
+        {
+            if (_mode == value)
+                return;
+
+            _mode = value;
+            ApplyModeRules();
+        }
+    }
+
+    public bool HighPrecisionPrediction => _highPrecisionPrediction;
+
+    public int SelectedBodyId
+    {
+        get => _selectionContext.SelectedBodyId;
+        set => _selectionContext.SelectedBodyId = value;
+    }
+
+    public OrbitData? SelectedOrbitData { get; set; }
+    public int OrbitReferenceBodyId { get; set; } = -1;
+    public string? ActiveEventWarning { get; set; }
+    public bool UseAutoCentralBody
+    {
+        get => _useAutoCentralBody;
+        set => _useAutoCentralBody = value;
+    }
+
+    public int SelectedCentralBodyId
+    {
+        get => _selectedCentralBodyId;
+        set => _selectedCentralBodyId = value;
+    }
 
     public void SetInteractivePlacement(bool enabled)
     {
@@ -220,6 +293,8 @@ public class ImGuiOverlay
 
     public void Render(double physicsMs, double renderMs, int bodyCount)
     {
+        ApplyModeRules();
+
         RenderTopMenus();
 
         if (_showSimulationControls)
@@ -234,6 +309,8 @@ public class ImGuiOverlay
             RenderAddBody();
         if (_showBodyInspector)
             RenderBodyInspector();
+        if (_showSimulationInsights)
+            RenderSimulationInsights();
 
         RenderBottomControlPanel();
     }
@@ -291,6 +368,18 @@ public class ImGuiOverlay
             _menuMode = simActive ? ControlMenuMode.None : ControlMenuMode.Simulation;
 
         ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.75f, 0.82f, 0.94f, 1.0f), "Application Mode");
+        bool simulationModeActive = _mode == ApplicationMode.Simulation;
+        bool analysisModeActive = _mode == ApplicationMode.Analysis;
+
+        if (RenderControlToggleButton("SIMULATE MODE", simulationModeActive))
+            Mode = ApplicationMode.Simulation;
+
+        ImGui.SameLine();
+        if (RenderControlToggleButton("ANALYZE MODE", analysisModeActive))
+            Mode = ApplicationMode.Analysis;
+
+        ImGui.Spacing();
         ImGui.TextColored(new Vector4(0.75f, 0.82f, 0.94f, 1.0f), "Placement Flow");
         ImGui.TextWrapped("Ghost follows cursor, right click to anchor, left click to commit.");
         ImGui.EndChild();
@@ -299,21 +388,50 @@ public class ImGuiOverlay
 
         ImGui.BeginChild("##control-middle", new Vector2(middleWidth, panelHeight - 18f), ImGuiChildFlags.Borders);
         ImGui.Text("Time Flow");
-        if (ImGui.SliderFloat("##time-flow-slider", ref _timeFlowValue, 1f, 10000f, "%.0f"))
+        if (ImGui.SliderFloat("##time-flow-slider", ref _timeFlowValue, 1f, 100000f, "%.0f"))
         {
-            _timeFlowValue = System.Math.Clamp(_timeFlowValue, 1f, 10000f);
+            _timeFlowValue = System.Math.Clamp(_timeFlowValue, 1f, 100000f);
             _manualTimeFlowInput = _timeFlowValue;
+        }
+
+        if (_mode == ApplicationMode.Analysis && _timeFlowValue > AnalysisModeMaxTimeFlowValue)
+        {
+            _timeFlowValue = AnalysisModeMaxTimeFlowValue;
+            _manualTimeFlowInput = _timeFlowValue;
+        }
+
+        if (ImGui.Button("1x", new Vector2(56f, 0))) _timeFlowValue = 100f;
+        ImGui.SameLine();
+        if (ImGui.Button("10x", new Vector2(56f, 0))) _timeFlowValue = 1000f;
+        ImGui.SameLine();
+        if (ImGui.Button("100x", new Vector2(56f, 0))) _timeFlowValue = 10000f;
+        ImGui.SameLine();
+        if (ImGui.Button("1000x", new Vector2(64f, 0))) _timeFlowValue = 100000f;
+
+        if (_mode == ApplicationMode.Analysis)
+        {
+            ImGui.TextColored(new Vector4(0.76f, 0.92f, 1.0f, 1.0f),
+                "Analysis mode: time scale capped at 10x and simulation runs at 0.1x base speed.");
         }
 
         ImGui.TextColored(new Vector4(0.75f, 0.82f, 0.94f, 1.0f), GetTimeFlowAnalysis(_timeFlowValue));
 
         if (ImGui.InputFloat("Manual Time Speed", ref _manualTimeFlowInput, 10f, 100f, "%.0f"))
         {
-            _manualTimeFlowInput = System.Math.Clamp(_manualTimeFlowInput, 1f, 10000f);
+            _manualTimeFlowInput = System.Math.Clamp(_manualTimeFlowInput, 1f, 100000f);
             _timeFlowValue = _manualTimeFlowInput;
+
+            if (_mode == ApplicationMode.Analysis && _timeFlowValue > AnalysisModeMaxTimeFlowValue)
+            {
+                _timeFlowValue = AnalysisModeMaxTimeFlowValue;
+                _manualTimeFlowInput = _timeFlowValue;
+            }
         }
 
-        ImGui.TextWrapped("100 is real-time baseline. Maximum simulation speed is 10000.");
+        var (dtStabilityLabel, dtStabilityColor, dtStabilityRatio) = GetTimestepStability();
+        ImGui.TextColored(dtStabilityColor, $"Timestep Stability: {dtStabilityLabel} ({dtStabilityRatio * 100.0:F0}% of max dt)");
+
+        ImGui.TextWrapped("100 is real-time baseline. Maximum simulation speed is 100000 (1000x). ");
         ImGui.EndChild();
 
         ImGui.SameLine(0, spacing);
@@ -332,6 +450,8 @@ public class ImGuiOverlay
         RenderWindowToggleChip("Add Body", ref _showAddBody);
         ImGui.SameLine();
         RenderWindowToggleChip("Body Inspector", ref _showBodyInspector);
+        ImGui.SameLine();
+        RenderWindowToggleChip("Simulation Insights", ref _showSimulationInsights);
 
         ImGui.EndChild();
 
@@ -622,7 +742,7 @@ public class ImGuiOverlay
         switch (verb)
         {
             case "help":
-                _cliHistory.Add("Commands: help, list bodies, set time <value>, set gas <value>, set gravity region <x> <y> <z> <radius> <mult>, trigger preset <name>, pause, play, step");
+                _cliHistory.Add("Commands: help, list bodies, set time <value>, set gas <value>, set gravity region <x> <y> <z> <radius> <mult>, trigger preset <name>, pause, play, stop, step");
                 break;
 
             case "list" when tokens.Length >= 2 && tokens[1].Equals("bodies", StringComparison.OrdinalIgnoreCase):
@@ -655,6 +775,11 @@ public class ImGuiOverlay
                 _cliHistory.Add("Simulation running.");
                 break;
 
+            case "stop":
+                _engine.Stop();
+                _cliHistory.Add("Simulation stopped and time reset.");
+                break;
+
             case "step":
                 _engine.StepOnce();
                 _cliHistory.Add("Single simulation step executed.");
@@ -678,7 +803,7 @@ public class ImGuiOverlay
         {
             if (float.TryParse(tokens[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
             {
-                _timeFlowValue = System.Math.Clamp(value, 1f, 10000f);
+                _timeFlowValue = System.Math.Clamp(value, 1f, 100000f);
                 _manualTimeFlowInput = _timeFlowValue;
                 _cliHistory.Add($"Time flow set to {_timeFlowValue:F0}.");
                 return;
@@ -763,7 +888,7 @@ public class ImGuiOverlay
                 break;
         }
 
-        _initialEnergy = double.NaN;
+        ResetStabilityBaselines();
     }
 
     private void ApplyStarLifecyclePreset()
@@ -877,18 +1002,113 @@ public class ImGuiOverlay
             else _engine.Start();
         }
         ImGui.SameLine();
+        if (ImGui.Button("Stop", new Vector2(50, 0))) _engine.Stop();
+        ImGui.SameLine();
         if (ImGui.Button("Step", new Vector2(50, 0))) _engine.StepOnce();
         ImGui.SameLine();
-        if (ImGui.Button("Reset", new Vector2(50, 0))) { _engine.Stop(); }
+        if (ImGui.Button("Reset", new Vector2(50, 0))) { _resetSimulation(); }
+
+        bool follow = _followSelectedBody;
+        if (ImGui.Checkbox("Follow Selected Body", ref follow))
+            _followSelectedBody = follow;
+
+        ImGui.SameLine();
+        if (_selectionContext.HasSelection)
+            ImGui.TextColored(new Vector4(0.72f, 0.90f, 1.0f, 1.0f), $"Selected: #{_selectionContext.SelectedBodyId}");
+
+        ImGui.Separator();
+        ImGui.Text("Orbit Reference Body");
+
+        bool autoCentral = _useAutoCentralBody;
+        if (ImGui.Checkbox("Auto Central Body", ref autoCentral))
+            _useAutoCentralBody = autoCentral;
+
+        var centralCandidates = _engine.Bodies.Where(b => b.IsActive).ToArray();
+        if (centralCandidates.Length > 0)
+        {
+            int centralIndex = 0;
+            for (int i = 0; i < centralCandidates.Length; i++)
+            {
+                if (centralCandidates[i].Id == _selectedCentralBodyId)
+                {
+                    centralIndex = i;
+                    break;
+                }
+            }
+
+            string[] centralBodyNames = centralCandidates.Select(b => $"[{b.Id}] {b.Type}").ToArray();
+            if (ImGui.Combo("Central Body", ref centralIndex, centralBodyNames, centralBodyNames.Length))
+            {
+                _selectedCentralBodyId = centralCandidates[centralIndex].Id;
+                _useAutoCentralBody = false;
+            }
+        }
+
+        var frameNames = Enum.GetNames<ReferenceFrameKind>();
+        int frameIndex = (int)_renderer.ReferenceFrame.ActiveFrame;
+        if (ImGui.Combo("Reference Frame", ref frameIndex, frameNames, frameNames.Length))
+            _renderer.ReferenceFrame.ActiveFrame = (ReferenceFrameKind)System.Math.Clamp(frameIndex, 0, frameNames.Length - 1);
+
+        if (_renderer.ReferenceFrame.ActiveFrame == ReferenceFrameKind.BodyRelative)
+        {
+            var activeBodies = _engine.Bodies.Where(b => b.IsActive).ToArray();
+            if (activeBodies.Length > 0)
+            {
+                string[] relativeBodyNames = activeBodies.Select(b => $"[{b.Id}] {b.Type}").ToArray();
+                int relativeIndex = 0;
+                for (int i = 0; i < activeBodies.Length; i++)
+                {
+                    if (activeBodies[i].Id == _renderer.ReferenceFrame.RelativeBodyId)
+                    {
+                        relativeIndex = i;
+                        break;
+                    }
+                }
+
+                if (ImGui.Combo("Frame Body", ref relativeIndex, relativeBodyNames, relativeBodyNames.Length))
+                    _renderer.ReferenceFrame.RelativeBodyId = activeBodies[relativeIndex].Id;
+            }
+        }
+
+        bool showPredicted = _showPredictedTrajectory;
+        if (ImGui.Checkbox("Show Predicted Trajectory", ref showPredicted))
+        {
+            _showPredictedTrajectory = showPredicted;
+            _renderer.ShowPredictedTrajectory = showPredicted;
+        }
+
+        bool highPrecisionPrediction = _highPrecisionPrediction;
+        if (ImGui.Checkbox("High Precision Prediction", ref highPrecisionPrediction))
+            _highPrecisionPrediction = highPrecisionPrediction;
+
+        if (_mode == ApplicationMode.Analysis)
+            ImGui.TextColored(new Vector4(0.74f, 0.90f, 1.0f, 1.0f), "Analysis mode forces high precision prediction.");
+
+        int predictionSteps = _predictionSteps;
+        if (ImGui.SliderInt("Prediction Steps", ref predictionSteps, 32, 1024))
+        {
+            _predictionSteps = predictionSteps;
+            _renderer.PredictionSteps = predictionSteps;
+        }
+
+        _renderer.HighPrecisionPrediction = _highPrecisionPrediction;
+        _renderer.UseAnalysisPrediction = _mode == ApplicationMode.Analysis;
 
         ImGui.Separator();
         ImGui.Text($"Sim Time: {_engine.CurrentTime:F4}");
         ImGui.Text($"Time Step (dt): {_engine.Config.TimeStep:E2}");
         ImGui.Text($"Effective dt: {_engine.CurrentState.CurrentDt:E2}");
+        ImGui.Text($"Solver Path: {_engine.LastSolverBackend}");
+        var (controlDtLabel, controlDtColor, controlDtRatio) = GetTimestepStability();
+        ImGui.TextColored(controlDtColor, $"Stability: {controlDtLabel} ({controlDtRatio * 100.0:F0}% max dt)");
 
         bool trails = _renderer.ShowOrbitalTrails;
         if (ImGui.Checkbox("Orbital Trails", ref trails))
             _renderer.ShowOrbitalTrails = trails;
+
+        bool persistentPaths = _renderer.ShowPersistentOrbitPaths;
+        if (ImGui.Checkbox("Persistent Orbit Paths", ref persistentPaths))
+            _renderer.ShowPersistentOrbitPaths = persistentPaths;
 
         bool accretionDisks = _renderer.ShowAccretionDisks;
         if (ImGui.Checkbox("Accretion Disks", ref accretionDisks))
@@ -902,9 +1122,17 @@ public class ImGuiOverlay
         if (ImGui.SliderInt("Trail Length", ref trailPoints, 8, 120))
             _renderer.MaxTrailPoints = trailPoints;
 
+        int orbitPathPoints = _renderer.OrbitPathMaxPoints;
+        if (ImGui.SliderInt("Orbit Path Length", ref orbitPathPoints, 120, 4096))
+            _renderer.OrbitPathMaxPoints = orbitPathPoints;
+
         float trailSpacing = _renderer.TrailMinDistance;
         if (ImGui.SliderFloat("Trail Spacing", ref trailSpacing, 0.0005f, 0.05f, "%.4f"))
             _renderer.TrailMinDistance = trailSpacing;
+
+        float orbitPathSpacing = _renderer.OrbitPathMinDistance;
+        if (ImGui.SliderFloat("Orbit Path Spacing", ref orbitPathSpacing, 0.0002f, 0.03f, "%.4f"))
+            _renderer.OrbitPathMinDistance = orbitPathSpacing;
 
         ImGui.Separator();
         ImGui.Text("Visual Tuning");
@@ -920,6 +1148,45 @@ public class ImGuiOverlay
         float saturation = _renderer.GlobalSaturation;
         if (ImGui.SliderFloat("Saturation", ref saturation, 0.0f, 2.0f, "%.2f"))
             _renderer.GlobalSaturation = saturation;
+
+        bool albedoMaps = _renderer.EnableAlbedoTextureMaps;
+        if (ImGui.Checkbox("Planet Albedo Texture Maps", ref albedoMaps))
+            _renderer.EnableAlbedoTextureMaps = albedoMaps;
+
+        float albedoBlend = _renderer.AlbedoTextureBlend;
+        if (ImGui.SliderFloat("Albedo Texture Blend", ref albedoBlend, 0.0f, 1.0f, "%.2f"))
+            _renderer.AlbedoTextureBlend = albedoBlend;
+
+        ImGui.Separator();
+        ImGui.Text("Star Lighting & Ray Tracing");
+
+        bool starDrivenLighting = _renderer.EnableStarDrivenLighting;
+        if (ImGui.Checkbox("Star Light Sources", ref starDrivenLighting))
+            _renderer.EnableStarDrivenLighting = starDrivenLighting;
+
+        float lightIntensityScale = _renderer.StarLightIntensityScale;
+        if (ImGui.SliderFloat("Star Light Intensity", ref lightIntensityScale, 0.1f, 6.0f, "%.2f"))
+            _renderer.StarLightIntensityScale = lightIntensityScale;
+
+        float starFalloff = _renderer.StarLightFalloff;
+        if (ImGui.SliderFloat("Star Light Falloff", ref starFalloff, 0.05f, 4.0f, "%.2f"))
+            _renderer.StarLightFalloff = starFalloff;
+
+        float ambientFloor = _renderer.AmbientLightFloor;
+        if (ImGui.SliderFloat("Ambient Floor", ref ambientFloor, 0.01f, 0.50f, "%.2f"))
+            _renderer.AmbientLightFloor = ambientFloor;
+
+        bool rayShadows = _renderer.EnableRayTracedShadows;
+        if (ImGui.Checkbox("Ray Traced Shadows", ref rayShadows))
+            _renderer.EnableRayTracedShadows = rayShadows;
+
+        float rayStrength = _renderer.RayShadowStrength;
+        if (ImGui.SliderFloat("Shadow Strength", ref rayStrength, 0.0f, 1.0f, "%.2f"))
+            _renderer.RayShadowStrength = rayStrength;
+
+        float raySoftness = _renderer.RayShadowSoftness;
+        if (ImGui.SliderFloat("Shadow Softness", ref raySoftness, 0.0005f, 0.20f, "%.4f"))
+            _renderer.RayShadowSoftness = raySoftness;
 
         ImGui.Separator();
         ImGui.Text("Black Hole Visual");
@@ -980,6 +1247,48 @@ public class ImGuiOverlay
             configDirty = true;
         }
 
+        bool soaPath = config.UseSoAPath;
+        if (ImGui.Checkbox("Use SoA Path", ref soaPath))
+        {
+            config.UseSoAPath = soaPath;
+            configDirty = true;
+        }
+
+        bool deterministic = config.DeterministicMode;
+        if (ImGui.Checkbox("Deterministic Mode", ref deterministic))
+        {
+            config.DeterministicMode = deterministic;
+            configDirty = true;
+        }
+
+        bool parallel = config.UseParallelComputation;
+        if (ImGui.Checkbox("Parallel Computation", ref parallel))
+        {
+            config.UseParallelComputation = parallel;
+            configDirty = true;
+        }
+
+        bool barnesHut = config.UseBarnesHut;
+        if (ImGui.Checkbox("Barnes-Hut Backend", ref barnesHut))
+        {
+            config.UseBarnesHut = barnesHut;
+            configDirty = true;
+        }
+
+        float theta = (float)config.Theta;
+        if (ImGui.SliderFloat("Barnes-Hut Theta", ref theta, 0.1f, 1.5f, "%.2f"))
+        {
+            config.Theta = System.Math.Clamp(theta, 0.1f, 1.5f);
+            configDirty = true;
+        }
+
+        bool useSimd = config.UseSimd;
+        if (ImGui.Checkbox("SIMD Backend", ref useSimd))
+        {
+            config.UseSimd = useSimd;
+            configDirty = true;
+        }
+
         bool collisions = config.EnableCollisions;
         if (ImGui.Checkbox("Enable Collisions", ref collisions))
         {
@@ -1000,6 +1309,13 @@ public class ImGuiOverlay
             if (ImGui.Checkbox("Jet Emission", ref jetEmission))
             {
                 config.EnableJetEmission = jetEmission;
+                configDirty = true;
+            }
+
+            int maxAccretionParticles = config.MaxAccretionParticles;
+            if (ImGui.SliderInt("Max Accretion Particles", ref maxAccretionParticles, 1000, 20000))
+            {
+                config.MaxAccretionParticles = System.Math.Clamp(maxAccretionParticles, 1000, 20000);
                 configDirty = true;
             }
 
@@ -1028,6 +1344,25 @@ public class ImGuiOverlay
             config.CollisionMode = Enum.TryParse<CollisionMode>(collisionModeNames[collisionModeIndex], out var parsed)
                 ? parsed
                 : CollisionMode.MergeOnly;
+            configDirty = true;
+        }
+
+        if (ImGui.Button("Mode: Merge", new Vector2(95, 0)))
+        {
+            config.CollisionMode = CollisionMode.MergeOnly;
+            configDirty = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Mode: Elastic", new Vector2(95, 0)))
+        {
+            config.CollisionMode = CollisionMode.BounceOnly;
+            configDirty = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Mode: Fragment", new Vector2(95, 0)))
+        {
+            config.CollisionMode = CollisionMode.Realistic;
+            config.FragmentationSpecificEnergyThreshold = System.Math.Min(config.FragmentationSpecificEnergyThreshold, 0.35);
             configDirty = true;
         }
 
@@ -1109,7 +1444,19 @@ public class ImGuiOverlay
             // Momentum display
             var momentum = state.TotalMomentum;
             double momentumMag = System.Math.Sqrt(momentum.X * momentum.X + momentum.Y * momentum.Y + momentum.Z * momentum.Z);
+            if (double.IsNaN(_initialMomentumMagnitude))
+                _initialMomentumMagnitude = momentumMag;
+
+            double momentumDriftPercent = _initialMomentumMagnitude > 1e-15
+                ? System.Math.Abs(momentumMag - _initialMomentumMagnitude) / System.Math.Max(_initialMomentumMagnitude, 1e-12) * 100.0
+                : 0.0;
+
+            string systemStability = StabilityClassifier.Classify(driftPercent / 100.0, momentumDriftPercent / 100.0);
+            Vector4 stabilityColor = GetStabilityColor(systemStability);
+
+            ImGui.TextColored(stabilityColor, $"System Stability: {systemStability}");
             ImGui.Text($"Total Momentum:    {momentumMag:E6}");
+            ImGui.Text($"Momentum Drift:    {momentumDriftPercent:F6}%%");
             ImGui.Text($"Collisions (step): {state.CollisionCount}");
             ImGui.Text($"Explosion Bursts:  {state.CollisionBursts.Count}");
 
@@ -1200,7 +1547,7 @@ public class ImGuiOverlay
         {
             _engine.SetIntegrator(_integratorNames[_selectedIntegrator]);
             // Reset initial energy tracking when switching integrators
-            _initialEnergy = double.NaN;
+            ResetStabilityBaselines();
         }
 
         ImGui.TextWrapped(_selectedIntegrator switch
@@ -1277,6 +1624,36 @@ public class ImGuiOverlay
             ImGui.Text("Velocity (AU/TU):");
             ImGui.InputFloat3("##vel", ref _newBodyVel, "%.4f");
 
+            var activeBodies = _engine.Bodies.Where(b => b.IsActive).ToArray();
+            if (activeBodies.Length > 0)
+            {
+                ImGui.Separator();
+                ImGui.Text("Orbit Generator");
+
+                string[] centralOptions = activeBodies.Select(b => $"[{b.Id}] {b.Type}").ToArray();
+                _orbitCentralBodySelection = System.Math.Clamp(_orbitCentralBodySelection, 0, centralOptions.Length - 1);
+                ImGui.Combo("Central Body", ref _orbitCentralBodySelection, centralOptions, centralOptions.Length);
+
+                string[] orbitTypes = { "Circular", "Elliptical" };
+                ImGui.Combo("Orbit Type", ref _orbitTypeSelection, orbitTypes, orbitTypes.Length);
+
+                if (_orbitTypeSelection == 1)
+                    ImGui.SliderFloat("Eccentricity", ref _orbitEccentricity, 0.0f, 0.9f, "%.2f");
+
+                if (ImGui.Button("Generate Orbit", new Vector2(-1, 26)))
+                {
+                    var central = activeBodies[_orbitCentralBodySelection];
+                    var orbitPos = new Vec3d(_newBodyPos.X, _newBodyPos.Y, _newBodyPos.Z);
+                    _newBodyVel = OrbitCalculator.CalculateOrbitalVelocityVector(
+                        central.Position,
+                        orbitPos,
+                        central.Velocity,
+                        central.Mass,
+                        elliptical: _orbitTypeSelection == 1,
+                        eccentricity: _orbitEccentricity).ToVector3();
+                }
+            }
+
             if (ImGui.Button("Place Body", new Vector2(-1, 30)))
             {
                 var manualTemplate = selectedTemplate with { Mass = _newBodyMass };
@@ -1297,13 +1674,13 @@ public class ImGuiOverlay
 
                     _engine.AddBody(body);
                     _nextBodyId++;
-                    _initialEnergy = double.NaN;
+                    ResetStabilityBaselines();
                 }
             }
         }
         else
         {
-            ImGui.TextWrapped("Interactive placement: ghost follows cursor in simulation panel. Right click to anchor, drag to set direction, left click to confirm.");
+            ImGui.TextWrapped("Interactive placement: left click to anchor, drag to define velocity vector, release left mouse to commit.");
             ImGui.InputFloat("Speed Scale", ref _directionSpeedScale, 0.05f, 0.1f, "%.3f");
             ImGui.InputFloat("Min Speed", ref _directionMinSpeed, 0.01f, 0.1f, "%.3f");
             ImGui.InputFloat("Max Speed", ref _directionMaxSpeed, 0.1f, 1.0f, "%.3f");
@@ -1314,7 +1691,8 @@ public class ImGuiOverlay
 
             ImGui.Separator();
             ImGui.Text($"Placement State: {_placement.State}");
-            ImGui.Text($"Preview speed: {_placement.Draft.DirectionMagnitude:F3}");
+            ImGui.Text($"Vector magnitude: {_placement.Draft.DirectionMagnitude:F3}");
+            ImGui.Text($"Direction: ({_placement.Draft.DirectionNormalized.X:F3}, {_placement.Draft.DirectionNormalized.Y:F3}, {_placement.Draft.DirectionNormalized.Z:F3})");
             if (ImGui.Button("Cancel Placement", new Vector2(-1, 28)))
                 _placement.Cancel();
         }
@@ -1364,14 +1742,31 @@ public class ImGuiOverlay
             bodyLabels[i] = $"[{bodies[i].Id}] {bodies[i].Type} (m={bodies[i].Mass:G4})";
         }
 
+        if (_selectionContext.HasSelection)
+        {
+            for (int i = 0; i < bodies.Length; i++)
+            {
+                if (bodies[i].Id == _selectionContext.SelectedBodyId)
+                {
+                    _selectedBodyIndex = i;
+                    break;
+                }
+            }
+        }
+
         ImGui.ListBox("##bodies", ref _selectedBodyIndex, bodyLabels, bodyLabels.Length, 4);
 
         if (_selectedBodyIndex >= 0 && _selectedBodyIndex < bodies.Length)
         {
             ref var body = ref bodies[_selectedBodyIndex];
+            _selectionContext.SelectedBodyId = body.Id;
 
             ImGui.Separator();
             ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), $"Body #{body.Id} - {body.Type}");
+
+            bool follow = _followSelectedBody;
+            if (ImGui.Checkbox("Follow This Body", ref follow))
+                _followSelectedBody = follow;
 
             ImGui.Separator();
 
@@ -1402,6 +1797,27 @@ public class ImGuiOverlay
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f),
                 $"  ({body.Acceleration.X:E3}, {body.Acceleration.Y:E3}, {body.Acceleration.Z:E3})");
 
+            if (_selectionContext.SelectedBodyId == body.Id && SelectedOrbitData != null)
+            {
+                ImGui.Separator();
+                ImGui.TextColored(new Vector4(0.78f, 0.92f, 1.0f, 1.0f), "Orbit Analysis");
+                if (OrbitReferenceBodyId >= 0)
+                    ImGui.Text($"Reference Body: #{OrbitReferenceBodyId}");
+
+                ImGui.Text($"Apoapsis: {FormatFinite(SelectedOrbitData.Apoapsis, "F6", "open")} AU");
+                ImGui.Text($"Periapsis: {FormatFinite(SelectedOrbitData.Periapsis, "F6", "open")} AU");
+                ImGui.Text($"Eccentricity: {SelectedOrbitData.Eccentricity:F6}");
+                ImGui.Text($"Orbit Type: {GetOrbitTypeDisplay(SelectedOrbitData.Type)}");
+                ImGui.Text($"Semi-Major Axis: {FormatFinite(SelectedOrbitData.SemiMajorAxis, "F6", "open")} AU");
+                ImGui.Text($"Period: {FormatFinite(SelectedOrbitData.Period, "F6", "open")} TU");
+
+                var (systemStability, stabilityColor) = GetCurrentSystemStability();
+                ImGui.TextColored(stabilityColor, $"System Stability: {systemStability}");
+
+                if (_mode == ApplicationMode.Analysis && !string.IsNullOrWhiteSpace(ActiveEventWarning))
+                    ImGui.TextColored(new Vector4(1.0f, 0.72f, 0.32f, 1.0f), $"Warning: {ActiveEventWarning}");
+            }
+
             ImGui.Separator();
 
             // Remove body button
@@ -1409,7 +1825,50 @@ public class ImGuiOverlay
             {
                 _engine.RemoveBody(body.Id);
                 _selectedBodyIndex = -1;
-                _initialEnergy = double.NaN;
+                _selectionContext.SelectedBodyId = -1;
+                ResetStabilityBaselines();
+            }
+
+            if ((body.Type == BodyType.Star || body.Type == BodyType.NeutronStar) &&
+                ImGui.Button("Trigger Supernova", new Vector2(-1, 25)))
+            {
+                if (_engine.TriggerSupernova(body.Id))
+                    ResetStabilityBaselines();
+            }
+
+            ImGui.Separator();
+            bool measure = _measurementMode;
+            if (_mode == ApplicationMode.Analysis)
+                measure = true;
+            if (ImGui.Checkbox("Measurement Mode", ref measure))
+                _measurementMode = measure;
+
+            if (_mode == ApplicationMode.Analysis)
+                _measurementMode = true;
+
+            if (_measurementMode && bodies.Length > 1)
+            {
+                string[] targetLabels = bodyLabels;
+                _measurementTargetIndex = System.Math.Clamp(_measurementTargetIndex, 0, targetLabels.Length - 1);
+
+                if (_measurementTargetIndex == _selectedBodyIndex)
+                    _measurementTargetIndex = (_selectedBodyIndex + 1) % targetLabels.Length;
+
+                ImGui.Combo("Target Body", ref _measurementTargetIndex, targetLabels, targetLabels.Length);
+                if (_measurementTargetIndex >= 0 && _measurementTargetIndex < bodies.Length && _measurementTargetIndex != _selectedBodyIndex)
+                {
+                    ref var target = ref bodies[_measurementTargetIndex];
+                    double dist = MeasurementTools.Distance(body, target);
+                    double relV = MeasurementTools.RelativeSpeed(body, target);
+                    double period = MeasurementTools.EstimateOrbitalPeriod(dist, body.Mass, target.Mass);
+
+                    ImGui.TextColored(new Vector4(0.78f, 0.91f, 1.0f, 1.0f), $"Distance: {dist:F6} AU");
+                    ImGui.TextColored(new Vector4(0.86f, 1.0f, 0.82f, 1.0f), $"Relative Speed: {relV:F6} AU/TU");
+                    if (double.IsFinite(period))
+                        ImGui.TextColored(new Vector4(1.0f, 0.92f, 0.78f, 1.0f), $"Estimated Period: {period:F6} TU");
+                    else
+                        ImGui.TextColored(new Vector4(1.0f, 0.72f, 0.62f, 1.0f), "Estimated Period: undefined");
+                }
             }
         }
         else
@@ -1419,5 +1878,168 @@ public class ImGuiOverlay
         }
 
         ImGui.End();
+    }
+
+    private void RenderSimulationInsights()
+    {
+        ImGui.SetNextWindowPos(new Vector2(1000, 360), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(300, 230), ImGuiCond.FirstUseEver);
+        ImGui.Begin("Simulation Insights");
+
+        if (!_selectionContext.HasSelection)
+        {
+            ImGui.TextColored(new Vector4(0.72f, 0.78f, 0.85f, 1.0f), "Select a body to enable scientific insights.");
+            ImGui.End();
+            return;
+        }
+
+        ImGui.Text($"Selected Body: #{_selectionContext.SelectedBodyId}");
+
+        if (_mode != ApplicationMode.Analysis)
+        {
+            ImGui.TextColored(new Vector4(0.78f, 0.86f, 0.95f, 1.0f),
+                "Switch to Analysis mode for automated event interpretation.");
+        }
+
+        string orbitTypeText = SelectedOrbitData != null
+            ? GetOrbitTypeDisplay(SelectedOrbitData.Type)
+            : "Unknown";
+        ImGui.Separator();
+        ImGui.Text($"Orbit Type: {orbitTypeText}");
+
+        var (stabilityLabel, stabilityColor) = GetCurrentSystemStability();
+        ImGui.TextColored(stabilityColor, $"Stability: {stabilityLabel}");
+
+        string eventLabel = string.IsNullOrWhiteSpace(ActiveEventWarning)
+            ? "None"
+            : ActiveEventWarning;
+
+        Vector4 eventColor = eventLabel == "None"
+            ? new Vector4(0.70f, 0.78f, 0.86f, 1.0f)
+            : new Vector4(1.0f, 0.72f, 0.32f, 1.0f);
+
+        ImGui.TextColored(eventColor, $"Active Event: {eventLabel}");
+
+        EventAdvisory advisory = EventAdvisor.Build(
+            ActiveEventWarning,
+            SelectedOrbitData?.Type,
+            stabilityLabel,
+            _engine.Config.CollisionMode);
+
+        Vector4 advisoryColor = GetInsightSeverityColor(advisory.Severity);
+        ImGui.Separator();
+        ImGui.TextColored(advisoryColor, $"Advisory: {advisory.Summary}");
+        ImGui.TextWrapped($"Suggested Action: {advisory.SuggestedAction}");
+
+        ImGui.End();
+    }
+
+    private void ResetStabilityBaselines()
+    {
+        _initialEnergy = double.NaN;
+        _initialMomentumMagnitude = double.NaN;
+    }
+
+    private void ApplyModeRules()
+    {
+        if (_mode != ApplicationMode.Analysis)
+            return;
+
+        if (_timeFlowValue > AnalysisModeMaxTimeFlowValue)
+        {
+            _timeFlowValue = AnalysisModeMaxTimeFlowValue;
+            _manualTimeFlowInput = _timeFlowValue;
+        }
+
+        _measurementMode = true;
+        _highPrecisionPrediction = true;
+
+        if (_predictionSteps < AnalysisModeMinPredictionSteps)
+            _predictionSteps = AnalysisModeMinPredictionSteps;
+
+        _showPredictedTrajectory = true;
+        _renderer.ShowPredictedTrajectory = true;
+        _renderer.PredictionSteps = _predictionSteps;
+        _renderer.HighPrecisionPrediction = _highPrecisionPrediction;
+        _renderer.UseAnalysisPrediction = true;
+    }
+
+    private static string FormatFinite(double value, string format, string fallback)
+    {
+        return double.IsFinite(value) ? value.ToString(format, CultureInfo.InvariantCulture) : fallback;
+    }
+
+    private static string GetOrbitTypeDisplay(OrbitType orbitType)
+    {
+        return orbitType switch
+        {
+            OrbitType.Circular => "Circular (Stable)",
+            OrbitType.Elliptical => "Elliptical (Stable)",
+            OrbitType.Parabolic => "Parabolic (Threshold)",
+            OrbitType.Hyperbolic => "Hyperbolic (Escaping)",
+            _ => "Chaotic (Unstable)"
+        };
+    }
+
+    private (string Label, Vector4 Color) GetCurrentSystemStability()
+    {
+        var state = _engine.CurrentState;
+        if (state == null)
+            return ("Unknown", new Vector4(0.65f, 0.65f, 0.7f, 1.0f));
+
+        double total = state.TotalEnergy;
+        if (double.IsNaN(_initialEnergy) && total != 0.0)
+            _initialEnergy = total;
+
+        double energyDriftPercent = !double.IsNaN(_initialEnergy) && _initialEnergy != 0.0
+            ? System.Math.Abs((total - _initialEnergy) / _initialEnergy) * 100.0
+            : state.EnergyDrift * 100.0;
+
+        var momentum = state.TotalMomentum;
+        double momentumMag = System.Math.Sqrt(momentum.X * momentum.X + momentum.Y * momentum.Y + momentum.Z * momentum.Z);
+        if (double.IsNaN(_initialMomentumMagnitude))
+            _initialMomentumMagnitude = momentumMag;
+
+        double momentumDriftPercent = _initialMomentumMagnitude > 1e-15
+            ? System.Math.Abs(momentumMag - _initialMomentumMagnitude) / System.Math.Max(_initialMomentumMagnitude, 1e-12) * 100.0
+            : 0.0;
+
+        string label = StabilityClassifier.Classify(energyDriftPercent / 100.0, momentumDriftPercent / 100.0);
+        return (label, GetStabilityColor(label));
+    }
+
+    private static Vector4 GetStabilityColor(string stability)
+    {
+        return stability switch
+        {
+            "Stable" => new Vector4(0.2f, 0.9f, 0.3f, 1.0f),
+            "Marginal" => new Vector4(1.0f, 0.85f, 0.2f, 1.0f),
+            _ => new Vector4(0.9f, 0.3f, 0.3f, 1.0f)
+        };
+    }
+
+    private (string Label, Vector4 Color, double Ratio) GetTimestepStability()
+    {
+        double maxDt = System.Math.Max(_engine.Config.MaxDt, 1e-12);
+        double ratio = System.Math.Clamp(_engine.CurrentState.CurrentDt / maxDt, 0.0, 5.0);
+
+        if (ratio < 0.55)
+            return ("Safe", new Vector4(0.2f, 0.9f, 0.3f, 1.0f), ratio);
+
+        if (ratio < 0.85)
+            return ("Caution", new Vector4(1.0f, 0.82f, 0.25f, 1.0f), ratio);
+
+        return ("Critical", new Vector4(0.95f, 0.34f, 0.34f, 1.0f), ratio);
+    }
+
+    private static Vector4 GetInsightSeverityColor(InsightSeverity severity)
+    {
+        return severity switch
+        {
+            InsightSeverity.Info => new Vector4(0.70f, 0.84f, 1.0f, 1.0f),
+            InsightSeverity.Caution => new Vector4(1.0f, 0.84f, 0.30f, 1.0f),
+            InsightSeverity.Warning => new Vector4(1.0f, 0.62f, 0.30f, 1.0f),
+            _ => new Vector4(0.95f, 0.34f, 0.34f, 1.0f),
+        };
     }
 }

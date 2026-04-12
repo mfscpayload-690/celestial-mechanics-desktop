@@ -12,6 +12,9 @@ public struct RenderBody
     public Vector4 Color;
     public int BodyType;
     public Vector4 VisualParams;
+    public float TextureLayer;
+    public float StarTemperatureK;
+    public bool IsSelected;
 }
 
 public class RenderState
@@ -25,7 +28,7 @@ public class RenderState
     public float[] BlackHoleMasses { get; set; } = new float[8];
     public int BlackHoleCount { get; set; }
 
-    public void UpdateFrom(SimulationEngine engine)
+    public void UpdateFrom(SimulationEngine engine, ReferenceFrameManager? referenceFrame = null, int selectedBodyId = -1)
     {
         var physicsBodies = engine.Bodies;
         if (physicsBodies == null || physicsBodies.Length == 0)
@@ -34,6 +37,8 @@ public class RenderState
             BlackHoleCount = 0;
             return;
         }
+
+        var frameOrigin = referenceFrame?.ComputeOrigin(physicsBodies) ?? CelestialMechanics.Math.Vec3d.Zero;
 
         if (Bodies.Length < physicsBodies.Length)
             Bodies = new RenderBody[physicsBodies.Length];
@@ -48,7 +53,8 @@ public class RenderState
             ref var body = ref physicsBodies[i];
             if (!body.IsActive) continue;
 
-            var pos = new Vector3((float)body.Position.X, (float)body.Position.Y, (float)body.Position.Z);
+            var framePos = body.Position - frameOrigin;
+            var pos = new Vector3((float)framePos.X, (float)framePos.Y, (float)framePos.Z);
 
             Bodies[activeCount++] = new RenderBody
             {
@@ -57,7 +63,10 @@ public class RenderState
                 Radius = MathF.Max(0.01f, (float)body.Radius),
                 Color = GetBodyColor(body.Type),
                 BodyType = (int)body.Type,
-                VisualParams = GetVisualParams(body.Type)
+                VisualParams = GetVisualParams(body.Type),
+                TextureLayer = GetTextureLayer(body),
+                StarTemperatureK = GetStarTemperatureK(body),
+                IsSelected = body.Id == selectedBodyId,
             };
 
             // Track black holes for lensing (max 8)
@@ -100,4 +109,44 @@ public class RenderState
         BodyType.BlackHole => new Vector4(7f, 0.14f, 0.45f, 0.55f),
         _ => new Vector4(1f, 0.03f, 0.03f, 0.2f),
     };
+
+    private static float GetTextureLayer(PhysicsBody body)
+    {
+        int selector = System.Math.Abs(body.Id) % 4;
+
+        return body.Type switch
+        {
+            BodyType.Planet or BodyType.RockyPlanet => selector switch
+            {
+                0 => ProceduralAlbedoAtlas.EarthLikeLayer,
+                1 => ProceduralAlbedoAtlas.MarsLikeLayer,
+                2 => ProceduralAlbedoAtlas.IceWorldLayer,
+                _ => ProceduralAlbedoAtlas.LavaWorldLayer,
+            },
+            BodyType.GasGiant => (System.Math.Abs(body.Id) % 2) == 0
+                ? ProceduralAlbedoAtlas.JupiterLikeLayer
+                : ProceduralAlbedoAtlas.GoldenGasLayer,
+            BodyType.Moon => ProceduralAlbedoAtlas.MoonLikeLayer,
+            BodyType.Asteroid or BodyType.Comet => ProceduralAlbedoAtlas.RockyLayer,
+            _ => ProceduralAlbedoAtlas.EarthLikeLayer,
+        };
+    }
+
+    private static float GetStarTemperatureK(PhysicsBody body)
+    {
+        if (body.Type == BodyType.NeutronStar)
+            return 12000f;
+
+        if (body.Type != BodyType.Star)
+            return 0f;
+
+        const double solarRadiusAu = 0.00465047;
+        double massSolar = System.Math.Max(body.Mass, 0.08);
+        double radiusSolar = System.Math.Max(body.Radius / solarRadiusAu, 0.08);
+
+        double luminosity = System.Math.Pow(massSolar, 3.4);
+        double temp = 5772.0 * System.Math.Pow(luminosity / (radiusSolar * radiusSolar), 0.25);
+        temp = System.Math.Clamp(temp, 2400.0, 45000.0);
+        return (float)temp;
+    }
 }

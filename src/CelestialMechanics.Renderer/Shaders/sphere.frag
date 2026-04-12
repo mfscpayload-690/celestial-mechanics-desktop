@@ -4,12 +4,32 @@ in vec3 vFragPos;
 in vec4 vColor;
 in vec4 vVisual;
 in vec3 vLocalNormal;
+in vec3 vBodyCenter;
+in float vBodyRadius;
+in float vTextureLayer;
+in float vStarTemperatureK;
 
 uniform vec3 uViewPos;
 uniform float uTime;
 uniform float uGlobalLuminosity;
 uniform float uGlobalGlow;
 uniform float uGlobalSaturation;
+uniform int uUseAlbedoAtlas;
+uniform sampler2DArray uBodyAlbedoAtlas;
+uniform float uAlbedoBlend;
+uniform int uEnableStarLighting;
+uniform int uStarLightCount;
+uniform vec3 uStarLights[8];
+uniform vec3 uStarLightColor[8];
+uniform float uStarLightIntensity[8];
+uniform float uStarLightFalloff;
+uniform float uAmbientFloor;
+uniform int uRayTraceShadows;
+uniform int uRayOccluderCount;
+uniform vec3 uRayOccluders[24];
+uniform float uRayOccluderRadius[24];
+uniform float uRayShadowStrength;
+uniform float uRayShadowSoftness;
 uniform int uBhQualityTier;      // 0=low, 1=medium, 2=high
 uniform int uBhPreset;           // 0=cinematic orange, 1=EHT230, 2=EHT345
 uniform float uBhRingThickness;
@@ -106,6 +126,14 @@ vec3 blackbodyColor(float tempK)
     return color;
 }
 
+vec2 sphereUv(vec3 n)
+{
+    vec3 nn = normalize(n);
+    float u = atan(nn.z, nn.x) * 0.15915494309 + 0.5;
+    float v = asin(clamp(nn.y, -1.0, 1.0)) * 0.31830988618 + 0.5;
+    return vec2(u, v);
+}
+
 vec3 applyBodyTexture(vec3 baseColor, vec3 n, float visualType)
 {
     if (visualType < 0.5)
@@ -170,6 +198,50 @@ vec3 applyBodyTexture(vec3 baseColor, vec3 n, float visualType)
     }
 }
 
+float traceShadowRay(vec3 origin, vec3 lightPos, vec3 selfCenter, float selfRadius)
+{
+    if (uRayTraceShadows == 0 || uRayOccluderCount == 0)
+        return 1.0;
+
+    vec3 toLight = lightPos - origin;
+    float maxDist = length(toLight);
+    if (maxDist < 1e-5)
+        return 1.0;
+
+    vec3 dir = toLight / maxDist;
+    float visibility = 1.0;
+    float softness = clamp(uRayShadowSoftness, 0.0005, 0.20);
+
+    for (int i = 0; i < 24; i++)
+    {
+        if (i >= uRayOccluderCount)
+            break;
+
+        vec3 center = uRayOccluders[i];
+        float radius = uRayOccluderRadius[i];
+
+        if (distance(center, selfCenter) < max(0.01, selfRadius * 0.55))
+            continue;
+
+        vec3 oc = origin - center;
+        float b = dot(oc, dir);
+        float c = dot(oc, oc) - radius * radius;
+        float h = b * b - c;
+        if (h <= 0.0)
+            continue;
+
+        float t = -b - sqrt(h);
+        if (t <= softness || t >= maxDist)
+            continue;
+
+        float blockerBias = 1.0 - smoothstep(0.0, maxDist, t);
+        float hit = clamp(uRayShadowStrength * (0.55 + 0.45 * blockerBias), 0.0, 1.0);
+        visibility *= (1.0 - hit);
+    }
+
+    return clamp(visibility, 0.05, 1.0);
+}
+
 vec3 shadeBlackHole(vec3 norm, vec3 viewDir, vec3 localN, out float horizonMask, out float ringMask, out float warpMask, out float opticalDepthMask)
 {
     float edge = 1.0 - abs(dot(norm, viewDir));
@@ -227,20 +299,9 @@ vec3 shadeBlackHole(vec3 norm, vec3 viewDir, vec3 localN, out float horizonMask,
 
 void main()
 {
-    vec3 lightDir = normalize(vec3(0.3, 1.0, 0.5));
     vec3 norm = normalize(vNormal);
     vec3 localN = normalize(vLocalNormal);
-
-    // Ambient
-    float ambient = 0.15;
-
-    // Diffuse
-    float diff = max(dot(norm, lightDir), 0.0);
-
-    // Specular (Blinn-Phong)
     vec3 viewDir = normalize(uViewPos - vFragPos);
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(norm, halfDir), 0.0), 64.0);
 
     float visualType = vVisual.x;
     float luminosity = vVisual.y;
@@ -283,7 +344,63 @@ void main()
         return;
     }
 
+    float ambient = clamp(uAmbientFloor, 0.01, 0.5);
+    float diff = 0.0;
+    float spec = 0.0;
+    vec3 lightTint = vec3(1.0);
+
+    if (uEnableStarLighting != 0 && uStarLightCount > 0)
+    {
+        vec3 accumulatedTint = vec3(0.0);
+
+        for (int i = 0; i < 8; i++)
+        {
+            if (i >= uStarLightCount)
+                break;
+
+            vec3 lightVec = uStarLights[i] - vFragPos;
+            float dist = length(lightVec);
+            if (dist < 1e-5)
+                continue;
+
+            vec3 lightDir = lightVec / dist;
+            float attenuation = uStarLightIntensity[i] / (1.0 + uStarLightFalloff * dist * dist);
+            vec3 shadowOrigin = vFragPos + norm * (0.002 + 0.02 * vBodyRadius);
+            float shadow = traceShadowRay(shadowOrigin, uStarLights[i], vBodyCenter, max(vBodyRadius, 0.01));
+
+            float lambert = max(dot(norm, lightDir), 0.0);
+            diff += lambert * attenuation * shadow;
+
+            vec3 halfDir = normalize(lightDir + viewDir);
+            spec += pow(max(dot(norm, halfDir), 0.0), 64.0) * attenuation * shadow;
+
+            accumulatedTint += uStarLightColor[i] * attenuation * shadow;
+        }
+
+        lightTint = max(accumulatedTint, vec3(0.08));
+    }
+    else
+    {
+        vec3 fallbackLightDir = normalize(vec3(0.3, 1.0, 0.5));
+        diff = max(dot(norm, fallbackLightDir), 0.0);
+        vec3 halfDir = normalize(fallbackLightDir + viewDir);
+        spec = pow(max(dot(norm, halfDir), 0.0), 64.0);
+    }
+
     vec3 albedo = applyBodyTexture(vColor.rgb, localN, visualType);
+
+    if (uUseAlbedoAtlas != 0 && visualType >= 1.0 && visualType < 6.5)
+    {
+        float layer = clamp(vTextureLayer, 0.0, 7.0);
+        vec3 texAlbedo = texture(uBodyAlbedoAtlas, vec3(sphereUv(localN), layer)).rgb;
+        albedo = mix(albedo, texAlbedo, clamp(uAlbedoBlend, 0.0, 1.0));
+    }
+
+    if (visualType < 0.5 && vStarTemperatureK > 0.0)
+    {
+        vec3 tempColor = blackbodyColor(vStarTemperatureK);
+        albedo = mix(albedo, tempColor, 0.78);
+    }
 
     float rim = pow(1.0 - max(dot(viewDir, norm), 0.0), 2.8);
     vec3 rimColor = mix(albedo * 0.55, vec3(0.9, 0.95, 1.0), 0.35);
@@ -291,7 +408,16 @@ void main()
     float starPulse = 0.92 + 0.08 * sin(uTime * 1.7 + localN.y * 8.0);
     float emissive = luminosity * (visualType < 0.5 ? starPulse : 1.0);
 
-    vec3 lit = (ambient + diff) * albedo + spec * 0.35;
+    if (visualType < 0.5 && vStarTemperatureK > 0.0)
+    {
+        float tempBoost = clamp((vStarTemperatureK - 2600.0) / 18000.0, 0.0, 1.0);
+        emissive *= (0.92 + 0.24 * tempBoost);
+    }
+
+    diff = min(diff, 4.0);
+    spec = min(spec, 2.5);
+
+    vec3 lit = ambient * albedo + diff * albedo * lightTint + spec * 0.35 * lightTint;
     vec3 glow = rimColor * (rim * glowStrength + atmosphere * rim * 0.45) * uGlobalGlow;
 
     vec3 result = lit + emissive * uGlobalLuminosity * albedo + glow;

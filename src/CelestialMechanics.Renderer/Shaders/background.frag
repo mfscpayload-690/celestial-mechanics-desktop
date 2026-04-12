@@ -5,6 +5,7 @@ out vec4 FragColor;
 
 uniform float uTime;
 uniform vec2 uResolution;
+uniform vec3 uCameraPos;
 
 float hash21(vec2 p)
 {
@@ -33,6 +34,9 @@ float starField(vec2 uv, float scale, float threshold)
 void main()
 {
     vec2 uv = vUv;
+    vec2 camOffsetNear = uCameraPos.xz * 0.0012;
+    vec2 camOffsetFar = uCameraPos.xz * 0.00035;
+    vec2 camOffsetNebula = uCameraPos.xz * 0.00018;
     vec2 p = (uv - 0.5) * vec2(uResolution.x / max(uResolution.y, 1.0), 1.0);
 
     vec3 top = vec3(0.02, 0.03, 0.07);
@@ -40,16 +44,16 @@ void main()
     float grad = smoothstep(-0.8, 1.0, p.y);
     vec3 col = mix(bot, top, grad);
 
-    float stars1 = starField(uv, 220.0, 0.996);
-    float stars2 = starField(uv + vec2(0.13, 0.29), 380.0, 0.9982);
-    float stars3 = starField(uv + vec2(0.47, 0.11), 120.0, 0.9925);
+    float stars1 = starField(uv + camOffsetNear, 220.0, 0.996);
+    float stars2 = starField(uv + vec2(0.13, 0.29) + camOffsetFar, 380.0, 0.9982);
+    float stars3 = starField(uv + vec2(0.47, 0.11) + camOffsetNear * 0.6, 120.0, 0.9925);
 
     vec3 starColor = vec3(0.95, 0.98, 1.0) * stars1
                    + vec3(0.75, 0.84, 1.0) * stars2
                    + vec3(1.0, 0.9, 0.78) * stars3;
 
     float nebula = 0.0;
-    vec2 q = uv * 3.0;
+    vec2 q = (uv + camOffsetNebula) * 3.0;
     nebula += sin((q.x + uTime * 0.01) * 2.5) * 0.06;
     nebula += sin((q.y - uTime * 0.008) * 2.1) * 0.05;
     nebula = max(nebula, 0.0);

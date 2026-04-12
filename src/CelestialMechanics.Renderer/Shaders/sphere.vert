@@ -5,6 +5,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec4 instancePosRadius;
 layout(location = 3) in vec4 instanceColor;
 layout(location = 4) in vec4 instanceVisual;
+layout(location = 5) in vec2 instanceMaterial;
 
 uniform mat4 uView;
 uniform mat4 uProjection;
@@ -14,6 +15,10 @@ out vec3 vFragPos;
 out vec4 vColor;
 out vec4 vVisual;
 out vec3 vLocalNormal;
+out vec3 vBodyCenter;
+out float vBodyRadius;
+out float vTextureLayer;
+out float vStarTemperatureK;
 
 void main()
 {
@@ -25,4 +30,8 @@ void main()
     vColor = instanceColor;
     vVisual = instanceVisual;
     vLocalNormal = normalize(aNormal);
+    vBodyCenter = instancePosRadius.xyz;
+    vBodyRadius = instancePosRadius.w;
+    vTextureLayer = instanceMaterial.x;
+    vStarTemperatureK = instanceMaterial.y;
 }

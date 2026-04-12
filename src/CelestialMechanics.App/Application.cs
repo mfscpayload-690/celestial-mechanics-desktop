@@ -4,16 +4,26 @@ using Silk.NET.Input;
 using Silk.NET.OpenGL.Extensions.ImGui;
 using CelestialMechanics.Renderer;
 using CelestialMechanics.Simulation;
+using CelestialMechanics.Simulation.Analysis;
 using CelestialMechanics.Physics.Types;
 using CelestialMechanics.Simulation.Placement;
 using CelestialMechanics.Data;
 using System.Numerics;
 using System.Linq;
+using System;
 
 namespace CelestialMechanics.App;
 
 public class Application
 {
+    [Flags]
+    private enum WorkflowEvent
+    {
+        None = 0,
+        SelectionChanged = 1,
+        ModeChanged = 2,
+    }
+
     private readonly IWindow _window;
     private GL _gl = null!;
     private IInputContext _input = null!;
@@ -27,6 +37,14 @@ public class Application
     // Performance tracking
     private double _lastPhysicsTime;
     private double _lastRenderTime;
+    private RuntimeDiagnosticsLogger? _runtimeDiagnostics;
+    private readonly SelectionContext _selectionContext = new();
+    private int _autoCentralBodyId = -1;
+    private int _lastSelectionBodyId = -1;
+    private ApplicationMode _lastMode = ApplicationMode.Simulation;
+    private WorkflowEvent _pendingWorkflowEvents = WorkflowEvent.None;
+    private bool _followSelectedBody;
+    private ApplicationMode _mode = ApplicationMode.Simulation;
 
     public Application(IWindow window) { _window = window; }
 
@@ -51,7 +69,7 @@ public class Application
             UseSimd = true,
             UseSoAPath = true,
             EnableAccretionDisks = true,
-            MaxAccretionParticles = 4000,
+            MaxAccretionParticles = 12000,
             EnableJetEmission = false
         });
         _clock = new SimulationClock();
@@ -60,7 +78,7 @@ public class Application
         SetupTwoBodyOrbit();
 
         // Initialize renderer
-        _renderer = new GLRenderer();
+        _renderer = new GLRenderer(_selectionContext);
         _renderer.Initialize(_gl);
 
         // Input handling
@@ -76,7 +94,16 @@ public class Application
         _inputHandler.OnCancelPlacement += () => _imGuiOverlay?.PlacementStateMachine.Cancel();
 
         // ImGui overlay
-        _imGuiOverlay = new ImGuiOverlay(_simulationEngine, _renderer);
+        _imGuiOverlay = new ImGuiOverlay(_simulationEngine, _renderer, _selectionContext, () =>
+        {
+            _simulationEngine.Stop();
+            SetupTwoBodyOrbit();
+        });
+        _imGuiOverlay.Mode = _mode;
+
+        string diagnosticsEnv = Environment.GetEnvironmentVariable("CM_MODULE1_DIAGNOSTICS") ?? "1";
+        bool enableDiagnostics = !string.Equals(diagnosticsEnv, "0", StringComparison.Ordinal);
+        _runtimeDiagnostics = new RuntimeDiagnosticsLogger(enableDiagnostics);
 
         _clock.Start();
         _simulationEngine.Start();
@@ -114,15 +141,83 @@ public class Application
         _inputHandler.BlockCameraMouseControls = _imGuiOverlay.InteractivePlacementEnabled;
         _inputHandler.Update((float)deltaTime);
 
-        HandleInteractivePlacement();
+        _mode = _imGuiOverlay.Mode;
 
-        double scaledDeltaTime = deltaTime * _imGuiOverlay.TimeScaleMultiplier;
+        if (_mode != _lastMode)
+            RaiseWorkflowEvent(WorkflowEvent.ModeChanged);
+
+        _followSelectedBody = _imGuiOverlay.FollowSelectedBody;
+
+        HandleInteractivePlacement();
+        HandleBodySelection();
+
+        if (_selectionContext.SelectedBodyId != _lastSelectionBodyId)
+            RaiseWorkflowEvent(WorkflowEvent.SelectionChanged);
+
+        if (_pendingWorkflowEvents != WorkflowEvent.None)
+            SyncSelectionWorkflow();
+
+        UpdateSelectedOrbitAnalysis();
+        UpdateSelectedEventDetection();
+        ApplyCameraFollow();
+
+        _renderer.UseAnalysisPrediction = _mode == ApplicationMode.Analysis;
+        _renderer.HighPrecisionPrediction = _imGuiOverlay.HighPrecisionPrediction;
+
+        double modeDeltaTime = _mode == ApplicationMode.Analysis
+            ? deltaTime * 0.1
+            : deltaTime;
+        double scaledDeltaTime = modeDeltaTime * _imGuiOverlay.TimeScaleMultiplier;
+        _simulationEngine.Config.TimeFlowSubstepBoost = System.Math.Clamp(_imGuiOverlay.TimeScaleMultiplier, 1.0, 64.0);
         _imGuiOverlay.ApplyEnvironmentEffects(scaledDeltaTime);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         _simulationEngine.Update(scaledDeltaTime);
         sw.Stop();
         _lastPhysicsTime = sw.Elapsed.TotalMilliseconds;
+
+        var state = _simulationEngine.CurrentState;
+        var config = _simulationEngine.Config;
+        _runtimeDiagnostics?.TryWrite(new RuntimeDiagnosticsSnapshot(
+            TimestampUtc: DateTime.UtcNow,
+            FrameDeltaTime: deltaTime,
+            ScaledDeltaTime: scaledDeltaTime,
+            PhysicsMs: _lastPhysicsTime,
+            RenderMs: _lastRenderTime,
+            EngineState: _simulationEngine.State.ToString(),
+            SolverBackend: _simulationEngine.LastSolverBackend,
+            Integrator: config.IntegratorName,
+            SimTime: _simulationEngine.CurrentTime,
+            SolverDt: state.CurrentDt,
+            BodyCount: state.BodyCount,
+            ActiveBodyCount: state.ActiveBodyCount,
+            CollisionCount: state.CollisionCount,
+            CollisionBursts: state.CollisionBursts.Count,
+            UseSoAPath: config.UseSoAPath,
+            UseBarnesHut: config.UseBarnesHut,
+            DeterministicMode: config.DeterministicMode,
+            UseParallel: config.UseParallelComputation,
+            UseSimd: config.UseSimd,
+            EnableAdaptiveTimestep: config.UseAdaptiveTimestep,
+            EnableCollisions: config.EnableCollisions,
+            TimeFlowSlider: _imGuiOverlay.TimeFlowValue,
+            TimeScaleMultiplier: _imGuiOverlay.TimeScaleMultiplier,
+            ShowSimulationControlsPanel: _imGuiOverlay.ShowSimulationControlsPanel,
+            ShowEnergyMonitorPanel: _imGuiOverlay.ShowEnergyMonitorPanel,
+            ShowPerformancePanel: _imGuiOverlay.ShowPerformancePanel,
+            ShowIntegratorPanel: _imGuiOverlay.ShowIntegratorPanel,
+            ShowAddBodyPanel: _imGuiOverlay.ShowAddBodyPanel,
+            ShowBodyInspectorPanel: _imGuiOverlay.ShowBodyInspectorPanel,
+            ShowGrid: _renderer.ShowGrid,
+            ShowOrbitalTrails: _renderer.ShowOrbitalTrails,
+            ShowBackground: _renderer.ShowBackground,
+            ShowAccretionDisks: _renderer.ShowAccretionDisks,
+            EnableAlbedoTextureMaps: _renderer.EnableAlbedoTextureMaps,
+            EnableStarDrivenLighting: _renderer.EnableStarDrivenLighting,
+            EnableRayTracedShadows: _renderer.EnableRayTracedShadows,
+            GlobalLuminosityScale: _renderer.GlobalLuminosityScale,
+            GlobalGlowScale: _renderer.GlobalGlowScale,
+            GlobalSaturation: _renderer.GlobalSaturation));
 
         _inputHandler.EndFrame();
     }
@@ -152,6 +247,7 @@ public class Application
 
     public void OnClose()
     {
+        _runtimeDiagnostics?.Dispose();
         _renderer?.Dispose();
         _imguiController?.Dispose();
         _gl?.Dispose();
@@ -192,7 +288,7 @@ public class Application
         if (placement.State == PlacementState.GhostFollow)
         {
             placement.UpdateGhostPosition(cursorWorld, cursorInPanel);
-            if (_inputHandler.RightClickThisFrame && cursorInPanel)
+            if (_inputHandler.LeftClickThisFrame && cursorInPanel)
                 placement.AnchorAt(cursorWorld);
         }
 
@@ -204,15 +300,36 @@ public class Application
                 _imGuiOverlay.DirectionMinSpeed,
                 _imGuiOverlay.DirectionMaxSpeed);
 
-            var previewSamples = PlacementMath.BuildGravityAwarePreview(
+            if (Enum.TryParse<BodyType>(selectedTemplate.BodyType, true, out var previewType) == false)
+                previewType = BodyType.Custom;
+
+            const int previewBodyId = int.MinValue + 1337;
+            var previewBodies = new List<PhysicsBody>(_simulationEngine.Bodies.Length + 1);
+            previewBodies.AddRange(_simulationEngine.Bodies);
+            previewBodies.Add(new PhysicsBody(
+                previewBodyId,
+                selectedTemplate.Mass,
                 placement.Draft.AnchorPosition,
                 placement.Draft.InitialVelocity,
-                _simulationEngine.Bodies,
-                steps: 48,
-                dt: System.Math.Max(_simulationEngine.Config.TimeStep * 1.5, 0.005));
+                previewType)
+            {
+                Radius = selectedTemplate.Radius,
+                GravityStrength = selectedTemplate.GravityStrength,
+                GravityRange = selectedTemplate.GravityRange,
+                IsActive = true,
+                IsCollidable = true
+            });
+
+            var previewSamples = TrajectoryPredictor.PredictBodyTrajectory(
+                previewBodies,
+                previewBodyId,
+                _simulationEngine.Config,
+                steps: 64,
+                dt: System.Math.Max(_simulationEngine.Config.TimeStep, 0.001));
+
             placement.SetPreviewSamples(previewSamples);
 
-            if (_inputHandler.LeftClickThisFrame && cursorInPanel)
+            if (_inputHandler.LeftReleasedThisFrame && cursorInPanel)
                 placement.Commit();
         }
 
@@ -324,5 +441,261 @@ public class Application
 
         world = new CelestialMechanics.Math.Vec3d(hit.X, hit.Y, hit.Z);
         return true;
+    }
+
+    private void HandleBodySelection()
+    {
+        if (_imGuiOverlay.InteractivePlacementEnabled)
+            return;
+
+        if (_inputHandler.LeftClickThisFrame && !ImGuiNET.ImGui.GetIO().WantCaptureMouse)
+        {
+            if (TryPickBodyId(out int pickedId))
+                _selectionContext.SelectedBodyId = pickedId;
+        }
+    }
+
+    private void RaiseWorkflowEvent(WorkflowEvent workflowEvent)
+    {
+        _pendingWorkflowEvents |= workflowEvent;
+    }
+
+    private void SyncSelectionWorkflow()
+    {
+        WorkflowEvent events = _pendingWorkflowEvents;
+        _pendingWorkflowEvents = WorkflowEvent.None;
+
+        if (events == WorkflowEvent.None)
+            return;
+
+        if ((events & WorkflowEvent.SelectionChanged) != 0)
+        {
+            _autoCentralBodyId = CentralBodyDetector.FindCentralBody(_simulationEngine.Bodies);
+            if (_imGuiOverlay.UseAutoCentralBody)
+                _imGuiOverlay.SelectedCentralBodyId = _autoCentralBodyId;
+        }
+
+        // Orbit analysis recompute and UI binding refresh.
+        UpdateSelectedOrbitAnalysis();
+        _imGuiOverlay.SelectedBodyId = _selectionContext.SelectedBodyId;
+
+        // Prediction refresh is selection/mode driven.
+        _renderer.RequestPredictionRefresh();
+        _renderer.UseAnalysisPrediction = _mode == ApplicationMode.Analysis;
+        _renderer.HighPrecisionPrediction = _imGuiOverlay.HighPrecisionPrediction;
+
+        // Camera target update when selection changes.
+        if ((events & WorkflowEvent.SelectionChanged) != 0 &&
+            _selectionContext.HasSelection &&
+            TryGetBodyPosition(_selectionContext.SelectedBodyId, out var position))
+        {
+            _renderer.Camera.Target = position;
+        }
+
+        _lastSelectionBodyId = _selectionContext.SelectedBodyId;
+        _lastMode = _mode;
+    }
+
+    private void UpdateSelectedOrbitAnalysis()
+    {
+        _imGuiOverlay.SelectedOrbitData = null;
+        _imGuiOverlay.OrbitReferenceBodyId = -1;
+
+        if (!_selectionContext.HasSelection)
+            return;
+
+        if (!TryGetBodyById(_selectionContext.SelectedBodyId, out var selectedBody))
+            return;
+
+        int referenceId = _imGuiOverlay.UseAutoCentralBody
+            ? _autoCentralBodyId
+            : _imGuiOverlay.SelectedCentralBodyId;
+
+        PhysicsBody referenceBody = default;
+
+        bool hasReference = referenceId >= 0 &&
+                            referenceId != _selectionContext.SelectedBodyId &&
+                            TryGetBodyById(referenceId, out referenceBody);
+
+        if (!hasReference && !TryGetOrbitReferenceBody(_selectionContext.SelectedBodyId, out referenceBody))
+            return;
+
+        if (_imGuiOverlay.UseAutoCentralBody)
+            _imGuiOverlay.SelectedCentralBodyId = referenceBody.Id;
+
+        _imGuiOverlay.SelectedOrbitData = OrbitCalculator.ComputeOrbit(selectedBody, referenceBody);
+        _imGuiOverlay.OrbitReferenceBodyId = referenceBody.Id;
+    }
+
+    private void UpdateSelectedEventDetection()
+    {
+        _imGuiOverlay.ActiveEventWarning = null;
+
+        if (_mode != ApplicationMode.Analysis || !_selectionContext.HasSelection)
+            return;
+
+        if (!TryGetBodyById(_selectionContext.SelectedBodyId, out var selectedBody))
+            return;
+
+        int referenceId = _imGuiOverlay.OrbitReferenceBodyId;
+        if (referenceId < 0 || !TryGetBodyById(referenceId, out var referenceBody))
+            return;
+
+        _imGuiOverlay.ActiveEventWarning = EventDetector.DetectPrimaryEvent(
+            selectedBody,
+            referenceBody,
+            _imGuiOverlay.SelectedOrbitData);
+    }
+
+    private void ApplyCameraFollow()
+    {
+        if (!_followSelectedBody || !_selectionContext.HasSelection)
+            return;
+
+        if (!TryGetBodyPosition(_selectionContext.SelectedBodyId, out var position))
+            return;
+
+        _renderer.Camera.Target = Vector3.Lerp(_renderer.Camera.Target, position, 0.15f);
+    }
+
+    private bool TryPickBodyId(out int bodyId)
+    {
+        bodyId = -1;
+
+        if (!TryGetCursorRay(out var rayOrigin, out var rayDir))
+            return false;
+
+        var bodies = _simulationEngine.Bodies;
+        if (bodies == null || bodies.Length == 0)
+            return false;
+
+        float bestT = float.MaxValue;
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            ref readonly var body = ref bodies[i];
+            if (!body.IsActive)
+                continue;
+
+            var center = new Vector3((float)body.Position.X, (float)body.Position.Y, (float)body.Position.Z);
+            var toCenter = center - rayOrigin;
+            float t = Vector3.Dot(toCenter, rayDir);
+            if (t < 0.0f)
+                continue;
+
+            var closest = rayOrigin + rayDir * t;
+            float distSq = Vector3.DistanceSquared(closest, center);
+            float pickRadius = System.MathF.Max((float)body.Radius * 1.35f, 0.08f);
+            if (distSq > pickRadius * pickRadius)
+                continue;
+
+            if (t < bestT)
+            {
+                bestT = t;
+                bodyId = body.Id;
+            }
+        }
+
+        return bodyId >= 0;
+    }
+
+    private bool TryGetCursorRay(out Vector3 rayOrigin, out Vector3 rayDir)
+    {
+        rayOrigin = Vector3.Zero;
+        rayDir = Vector3.UnitZ;
+
+        var mouse = _inputHandler.MousePosition;
+        int width = _window.Size.X;
+        int height = _window.Size.Y;
+
+        if (width <= 0 || height <= 0)
+            return false;
+
+        float x = (2.0f * mouse.X / width) - 1.0f;
+        float y = 1.0f - (2.0f * mouse.Y / height);
+
+        var view = _renderer.Camera.GetViewMatrix();
+        var projection = _renderer.Camera.GetProjectionMatrix(width / (float)height);
+        var viewProj = view * projection;
+
+        if (!Matrix4x4.Invert(viewProj, out var invViewProj))
+            return false;
+
+        var near4 = Vector4.Transform(new Vector4(x, y, 0f, 1f), invViewProj);
+        var far4 = Vector4.Transform(new Vector4(x, y, 1f, 1f), invViewProj);
+
+        if (System.Math.Abs(near4.W) < 1e-8 || System.Math.Abs(far4.W) < 1e-8)
+            return false;
+
+        var nearPoint = new Vector3(near4.X / near4.W, near4.Y / near4.W, near4.Z / near4.W);
+        var farPoint = new Vector3(far4.X / far4.W, far4.Y / far4.W, far4.Z / far4.W);
+
+        var dir = farPoint - nearPoint;
+        if (dir.LengthSquared() < 1e-12f)
+            return false;
+
+        rayOrigin = nearPoint;
+        rayDir = Vector3.Normalize(dir);
+        return true;
+    }
+
+    private bool TryGetBodyPosition(int bodyId, out Vector3 position)
+    {
+        var bodies = _simulationEngine.Bodies;
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            if (!bodies[i].IsActive || bodies[i].Id != bodyId)
+                continue;
+
+            position = new Vector3((float)bodies[i].Position.X, (float)bodies[i].Position.Y, (float)bodies[i].Position.Z);
+            return true;
+        }
+
+        position = Vector3.Zero;
+        return false;
+    }
+
+    private bool TryGetBodyById(int bodyId, out PhysicsBody body)
+    {
+        var bodies = _simulationEngine.Bodies;
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            if (!bodies[i].IsActive || bodies[i].Id != bodyId)
+                continue;
+
+            body = bodies[i];
+            return true;
+        }
+
+        body = default;
+        return false;
+    }
+
+    private bool TryGetOrbitReferenceBody(int selectedBodyId, out PhysicsBody referenceBody)
+    {
+        var bodies = _simulationEngine.Bodies;
+        int bestIndex = -1;
+        double bestMass = double.NegativeInfinity;
+
+        for (int i = 0; i < bodies.Length; i++)
+        {
+            ref readonly var body = ref bodies[i];
+            if (!body.IsActive || body.Id == selectedBodyId)
+                continue;
+
+            if (body.Mass <= bestMass)
+                continue;
+
+            bestMass = body.Mass;
+            bestIndex = i;
+        }
+
+        if (bestIndex >= 0)
+        {
+            referenceBody = bodies[bestIndex];
+            return true;
+        }
+
+        referenceBody = default;
+        return false;
     }
 }
