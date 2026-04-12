@@ -14,8 +14,8 @@ public class InstancedSphereRenderer : IDisposable
     private GL? _gl;
     private nuint _gpuInstanceCapacityBytes;
 
-    // Per-instance data: pos.xyz + radius + color.rgba + visual.rgba = 12 floats
-    private const int InstanceStride = 12 * sizeof(float);
+    // Per-instance data: pos.xyz + radius + color.rgba + visual.rgba + material.xy = 14 floats
+    private const int InstanceStride = 14 * sizeof(float);
     private float[] _instanceData = Array.Empty<float>();
 
     public void Initialize(GL gl)
@@ -76,6 +76,11 @@ public class InstancedSphereRenderer : IDisposable
         gl.VertexAttribPointer(4, 4, VertexAttribPointerType.Float, false, (uint)InstanceStride, 8 * sizeof(float));
         gl.VertexAttribDivisor(4, 1);
 
+        // Instance material params (location 5): x=texture layer, y=star temperature K
+        gl.EnableVertexAttribArray(5);
+        gl.VertexAttribPointer(5, 2, VertexAttribPointerType.Float, false, (uint)InstanceStride, 12 * sizeof(float));
+        gl.VertexAttribDivisor(5, 1);
+
         gl.BindVertexArray(0);
     }
 
@@ -84,14 +89,14 @@ public class InstancedSphereRenderer : IDisposable
         _instanceCount = count;
         if (count == 0) return;
 
-        int dataSize = count * 12;
+        int dataSize = count * 14;
         if (_instanceData.Length < dataSize)
             _instanceData = new float[dataSize];
 
         for (int i = 0; i < count; i++)
         {
             ref var body = ref bodies[i];
-            int offset = i * 12;
+            int offset = i * 14;
 
             _instanceData[offset + 0] = body.Position.X;
             _instanceData[offset + 1] = body.Position.Y;
@@ -105,6 +110,8 @@ public class InstancedSphereRenderer : IDisposable
             _instanceData[offset + 9] = body.VisualParams.Y;
             _instanceData[offset + 10] = body.VisualParams.Z;
             _instanceData[offset + 11] = body.VisualParams.W;
+            _instanceData[offset + 12] = body.TextureLayer;
+            _instanceData[offset + 13] = body.StarTemperatureK;
         }
 
         _gl!.BindBuffer(BufferTargetARB.ArrayBuffer, _instanceVbo);

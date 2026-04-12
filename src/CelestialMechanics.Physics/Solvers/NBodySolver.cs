@@ -89,6 +89,7 @@ public class NBodySolver
     // ── Shared ─────────────────────────────────────────────────────────────────
     private readonly EnergyCalculator _energy = new();
     public IIntegrator CurrentIntegrator => _integrator;
+    public string LastBackendName { get; private set; } = "AoS:VerletIntegrator";
 
     public ReadOnlySpan<DiskParticle> GetAccretionParticles()
     {
@@ -232,6 +233,11 @@ public class NBodySolver
         }
         else if (_accretionDisk != null)
         {
+            if (enableAccretionDisks && _accretionDisk.MaxParticles != maxAccretionParticles)
+            {
+                _accretionDisk = new AccretionDiskSystem(maxAccretionParticles);
+            }
+
             _accretionDisk.EnableJets = enableJets;
             _accretionDisk.JetThreshold = jetThreshold;
         }
@@ -342,7 +348,9 @@ public class NBodySolver
             _soaBodies = new BodySoA(NextPowerOfTwo(System.Math.Max(bodies.Length, 16)));
 
         _soaBodies.CopyFrom(bodies);
-        _soaIntegrator.Step(_soaBodies, SelectBackend(), _softening, dt);
+        var backend = SelectBackend();
+        LastBackendName = $"SoA:{backend.GetType().Name}";
+        _soaIntegrator.Step(_soaBodies, backend, _softening, dt);
 
         // ── Collision detection and resolution (after integration) ────────
         if (_enableCollisions)
@@ -370,6 +378,7 @@ public class NBodySolver
 
     private void StepAoS(PhysicsBody[] bodies, double dt)
     {
+        LastBackendName = $"AoS:{_integrator.GetType().Name}";
         _integrator.Step(bodies, dt, GetForcesCache());
     }
 

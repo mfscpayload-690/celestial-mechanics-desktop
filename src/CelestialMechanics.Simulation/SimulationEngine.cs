@@ -29,6 +29,7 @@ public class SimulationEngine
     public int ActiveAccretionParticleCount => _solver.GetActiveAccretionParticleCount();
     public double CurrentTime { get; private set; }
     public PhysicsConfig Config => _config;
+    public string LastSolverBackend => _solver.LastBackendName;
 
     public ReadOnlySpan<DiskParticle> GetAccretionParticles()
     {
@@ -101,6 +102,73 @@ public class SimulationEngine
         _bodies = _bodies.Where(b => b.Id != id).ToArray();
     }
 
+    public bool TriggerSupernova(int bodyId, int ejectaCount = 24)
+    {
+        int index = -1;
+        for (int i = 0; i < _bodies.Length; i++)
+        {
+            if (_bodies[i].Id == bodyId && _bodies[i].IsActive)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < 0)
+            return false;
+
+        ref var progenitor = ref _bodies[index];
+        if (progenitor.Type != BodyType.Star && progenitor.Type != BodyType.NeutronStar)
+            return false;
+
+        double originalMass = progenitor.Mass;
+        double remnantMass = System.Math.Max(0.1, originalMass * 0.22);
+        remnantMass = System.Math.Min(remnantMass, originalMass * 0.9);
+        double ejectaMass = originalMass - remnantMass;
+
+        if (ejectaMass <= 1e-10)
+            return false;
+
+        var list = new List<PhysicsBody>(_bodies.Length + System.Math.Max(8, ejectaCount));
+        list.AddRange(_bodies);
+
+        var remnant = list[index];
+        remnant.Mass = remnantMass;
+        remnant.Type = remnantMass >= 2.8 ? BodyType.BlackHole : BodyType.NeutronStar;
+        remnant.Density = DensityModel.GetDefaultDensity(remnant.Type);
+        remnant.RecalculateRadius();
+        list[index] = remnant;
+
+        int spawnCount = System.Math.Clamp(ejectaCount, 8, 96);
+        int nextId = list.Count == 0 ? 0 : list.Max(b => b.Id) + 1;
+        double massPerEjecta = ejectaMass / spawnCount;
+        double launchSpeed = System.Math.Sqrt(
+            CelestialMechanics.Math.PhysicalConstants.G_Sim * System.Math.Max(originalMass, 1e-6) /
+            System.Math.Max(progenitor.Radius, 0.02));
+
+        for (int i = 0; i < spawnCount; i++)
+        {
+            var dir = FibonacciDirection(i, spawnCount);
+            double speedScale = 0.55 + 0.45 * ((i % 7) / 6.0);
+            var velocity = progenitor.Velocity + dir * (launchSpeed * speedScale);
+            var position = progenitor.Position + dir * System.Math.Max(progenitor.Radius * 0.45, 0.01);
+
+            var ejecta = new PhysicsBody(nextId++, massPerEjecta, position, velocity, BodyType.Asteroid)
+            {
+                Radius = System.Math.Max(0.0025, progenitor.Radius * 0.08),
+                GravityStrength = progenitor.GravityStrength,
+                GravityRange = progenitor.GravityRange,
+                IsActive = true,
+                IsCollidable = true
+            };
+
+            list.Add(ejecta);
+        }
+
+        _bodies = list.ToArray();
+        return true;
+    }
+
     public void Start()
     {
         _state = EngineState.Running;
@@ -127,6 +195,9 @@ public class SimulationEngine
 
     public void StepOnce()
     {
+        if (_state == EngineState.Running)
+            _state = EngineState.Paused;
+
         // Single physics step (for step mode)
         double dt = ComputeDt();
 
@@ -149,8 +220,13 @@ public class SimulationEngine
 
         double dt = ComputeDt();
         int maxSubsteps = System.Math.Max(1, _config.MaxSubstepsPerFrame);
+        double substepBoost = System.Math.Max(1.0, _config.TimeFlowSubstepBoost);
+        int dynamicSubstepBudget = System.Math.Clamp(
+            (int)System.Math.Ceiling(maxSubsteps * substepBoost),
+            maxSubsteps,
+            1024);
         int substeps = 0;
-        while (_accumulator >= dt && substeps < maxSubsteps)
+        while (_accumulator >= dt && substeps < dynamicSubstepBudget)
         {
             int collisionSubsteps = DetermineCollisionSubsteps(dt);
             double subDt = dt / collisionSubsteps;
@@ -172,7 +248,7 @@ public class SimulationEngine
 
         // Prevent runaway catch-up loops from stalling rendering.
         if (_accumulator >= dt)
-            _accumulator = System.Math.Min(_accumulator, dt * 2.0);
+            _accumulator = System.Math.Min(_accumulator, dt * System.Math.Max(2.0, dynamicSubstepBudget));
 
         InterpolationAlpha = dt > 0 ? _accumulator / dt : 0.0;
     }
@@ -343,5 +419,18 @@ public class SimulationEngine
             RK4Integrator => "RK4",
             _ => _solver.CurrentIntegrator?.GetType().Name ?? "None"
         };
+    }
+
+    private static CelestialMechanics.Math.Vec3d FibonacciDirection(int index, int count)
+    {
+        double goldenAngle = System.Math.PI * (3.0 - System.Math.Sqrt(5.0));
+        double y = 1.0 - ((index + 0.5) / count) * 2.0;
+        double radius = System.Math.Sqrt(System.Math.Max(0.0, 1.0 - y * y));
+        double theta = goldenAngle * index;
+
+        return new CelestialMechanics.Math.Vec3d(
+            System.Math.Cos(theta) * radius,
+            y,
+            System.Math.Sin(theta) * radius);
     }
 }

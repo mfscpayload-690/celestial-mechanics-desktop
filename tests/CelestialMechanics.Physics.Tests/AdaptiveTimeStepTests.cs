@@ -225,4 +225,60 @@ public class AdaptiveTimeStepTests
         Assert.True(engine.CurrentState.CurrentDt > 1e-5,
             $"Expected effective dt to remain interactive, got {engine.CurrentState.CurrentDt}");
     }
+
+    // ── Test 8: Time flow substep boost increases catch-up capacity ─────────
+
+    [Fact]
+    public void TimeFlowSubstepBoost_AllowsMoreCatchup()
+    {
+        var config = new PhysicsConfig
+        {
+            TimeStep = 0.01,
+            DeterministicMode = true,
+            UseAdaptiveTimestep = false,
+            MaxSubstepsPerFrame = 2,
+            TimeFlowSubstepBoost = 4.0,
+            UseSoAPath = true,
+        };
+
+        var engine = new SimulationEngine(config);
+        engine.SetBodies(new[]
+        {
+            new PhysicsBody(0, 1.0, Vec3d.Zero, Vec3d.Zero, BodyType.Star),
+        });
+
+        engine.Start();
+        engine.Update(1.0);
+
+        Assert.True(engine.CurrentTime > 0.0200001,
+            $"Expected boosted catch-up beyond base cap, got {engine.CurrentTime}");
+        Assert.True(engine.CurrentTime <= 0.0800001,
+            $"Boosted catch-up should still be bounded by boosted cap, got {engine.CurrentTime}");
+    }
+
+    // ── Test 9: StepOnce pauses running engine before stepping ──────────────
+
+    [Fact]
+    public void StepOnce_PausesRunningEngineBeforeStep()
+    {
+        var config = new PhysicsConfig
+        {
+            TimeStep = 0.01,
+            DeterministicMode = true,
+            UseAdaptiveTimestep = false,
+            UseSoAPath = true,
+        };
+
+        var engine = new SimulationEngine(config);
+        engine.SetBodies(new[]
+        {
+            new PhysicsBody(0, 1.0, Vec3d.Zero, Vec3d.Zero, BodyType.Star),
+        });
+
+        engine.Start();
+        engine.StepOnce();
+
+        Assert.Equal(EngineState.Paused, engine.State);
+        Assert.True(engine.CurrentTime > 0.0, "StepOnce should advance simulation time by one step.");
+    }
 }
