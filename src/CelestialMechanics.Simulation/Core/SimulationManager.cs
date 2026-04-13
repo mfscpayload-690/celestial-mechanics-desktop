@@ -40,6 +40,7 @@ public sealed class SimulationManager
     private readonly List<(ITriggerCondition Condition, IEventAction Action)> _eventRules = new();
     private readonly NBodySolver _solver;
     private PhysicsBody[] _bodies = Array.Empty<PhysicsBody>();
+    private readonly List<PhysicsComponent> _activePhysicsComponents = new();
     private bool _bodiesDirty = true;
     private int _nextBodyId;
 
@@ -217,6 +218,9 @@ public sealed class SimulationManager
         if (_bodies.Length != count)
             _bodies = new PhysicsBody[count];
 
+        _bodiesDirty = false;
+        _activePhysicsComponents.Clear();
+
         int idx = 0;
         for (int i = 0; i < _entities.Count; i++)
         {
@@ -227,6 +231,8 @@ public sealed class SimulationManager
             if (pc == null) continue;
 
             pc.BodyIndex = idx;
+            _activePhysicsComponents.Add(pc);
+            
             _bodies[idx] = new PhysicsBody(idx, pc.Mass, pc.Position, pc.Velocity, BodyType.Custom)
             {
                 Velocity = pc.Velocity,
@@ -245,35 +251,27 @@ public sealed class SimulationManager
 
     private void SyncEntitiesToBodies()
     {
-        for (int i = 0; i < _entities.Count; i++)
+        for (int i = 0; i < _activePhysicsComponents.Count; i++)
         {
-            var entity = _entities[i];
-            if (!entity.IsActive) continue;
-
-            var pc = entity.GetComponent<PhysicsComponent>();
-            if (pc == null || pc.BodyIndex < 0 || pc.BodyIndex >= _bodies.Length) continue;
-
+            var pc = _activePhysicsComponents[i];
             int idx = pc.BodyIndex;
+            
             _bodies[idx].Mass = pc.Mass;
             _bodies[idx].Position = pc.Position;
             _bodies[idx].Velocity = pc.Velocity;
             _bodies[idx].Acceleration = pc.Acceleration;
             _bodies[idx].Radius = pc.Radius;
-            _bodies[idx].IsActive = entity.IsActive;
+            _bodies[idx].IsActive = true;
         }
     }
 
     private void SyncBodiesToEntities()
     {
-        for (int i = 0; i < _entities.Count; i++)
+        for (int i = 0; i < _activePhysicsComponents.Count; i++)
         {
-            var entity = _entities[i];
-            if (!entity.IsActive) continue;
-
-            var pc = entity.GetComponent<PhysicsComponent>();
-            if (pc == null || pc.BodyIndex < 0 || pc.BodyIndex >= _bodies.Length) continue;
-
+            var pc = _activePhysicsComponents[i];
             int idx = pc.BodyIndex;
+
             pc.Position = _bodies[idx].Position;
             pc.Velocity = _bodies[idx].Velocity;
             pc.Acceleration = _bodies[idx].Acceleration;
@@ -287,15 +285,9 @@ public sealed class SimulationManager
         double ratio = SpaceMetric.GetScaleRatio();
         if (System.Math.Abs(ratio - 1.0) < 1e-15) return;
 
-        for (int i = 0; i < _entities.Count; i++)
+        for (int i = 0; i < _activePhysicsComponents.Count; i++)
         {
-            var entity = _entities[i];
-            if (!entity.IsActive) continue;
-
-            var pc = entity.GetComponent<PhysicsComponent>();
-            if (pc == null) continue;
-
-            // Scale position relative to origin
+            var pc = _activePhysicsComponents[i];
             pc.Position = pc.Position * ratio;
         }
     }
