@@ -193,6 +193,18 @@ public class GLRenderer : IDisposable
         _previewTrajectory.Clear();
     }
 
+    public void ClearAllHistory()
+    {
+        _trailByBodyId.Clear();
+        _lastTrailPointByBodyId.Clear();
+        _trailColorByBodyId.Clear();
+        _activeTrailIds.Clear();
+
+        _orbitPathByBodyId.Clear();
+        _lastOrbitPathPointByBodyId.Clear();
+        _activeOrbitPathIds.Clear();
+    }
+
     public void Initialize(GL gl)
     {
         _gl = gl;

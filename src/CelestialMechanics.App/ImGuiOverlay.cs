@@ -43,6 +43,7 @@ public class ImGuiOverlay
     private Vector3 _newBodyVel = Vector3.Zero;
     private float _newBodyMass = 1.0f;
     private int _nextBodyId = 10;
+    private string _scenarioName = "MyScenario";
     private readonly IReadOnlyList<CelestialObjectCategory> _catalog = CelestialCatalog.Categories;
     private readonly IReadOnlyList<AddMenuEntry> _addEntries = CelestialAddMenuCatalog.Entries;
     private bool _interactivePlacementEnabled;
@@ -704,6 +705,119 @@ public class ImGuiOverlay
             ApplyPreset("nebula-formation");
         if (ImGui.Button("Planet Formation", new Vector2(-1, 28)))
             ApplyPreset("planet-formation");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.Text("Custom Scenarios (.cesim)");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText("##scenario-name", ref _scenarioName, 128);
+        
+        if (ImGui.Button("Save As", new Vector2(-1, 28)))
+            SaveScenario(_scenarioName);
+        if (ImGui.Button("Load", new Vector2(-1, 28)))
+            LoadScenario(_scenarioName);
+    }
+
+    private void SaveScenario(string name)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(name)) name = "MyScenario";
+            string dtStr = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            if (name.Contains("{time}")) name = name.Replace("{time}", dtStr);
+
+            string directory = "Scenarios";
+            if (!System.IO.Directory.Exists(directory))
+                System.IO.Directory.CreateDirectory(directory);
+
+            string path = System.IO.Path.Combine(directory, name + ".cesim");
+
+            var manager = new CelestialMechanics.Simulation.Core.SimulationManager(_engine.Config);
+            foreach (var body in _engine.Bodies)
+            {
+                if (!body.IsActive) continue;
+                var entity = new CelestialMechanics.Simulation.Core.Entity() { Tag = $"Body_{body.Id}" };
+                var pc = new CelestialMechanics.Simulation.Components.PhysicsComponent
+                {
+                    Mass = body.Mass,
+                    Radius = body.Radius,
+                    IsCollidable = body.IsCollidable,
+                    Position = body.Position,
+                    Velocity = body.Velocity,
+                    Acceleration = body.Acceleration
+                };
+                entity.AddComponent(pc);
+                manager.AddEntity(entity);
+            }
+            manager.FlushPendingChanges();
+
+            var scene = new CelestialMechanics.AppCore.Scene.Scene(name, "User")
+            {
+                Description = "Custom scenario saved from UI"
+            };
+
+            var serializer = new CelestialMechanics.AppCore.Serialization.ProjectSerializer();
+            
+            // Pause while saving state
+            var wasRunning = _engine.State == EngineState.Running;
+            if (wasRunning) _engine.Pause();
+            
+            serializer.SaveProject(path, scene, manager);
+            
+            if (wasRunning) _engine.Start();
+            
+            _cliHistory.Add($"> Saved scenario to {path}");
+        }
+        catch(System.Exception ex)
+        {
+            _cliHistory.Add($"> Error saving scenario: {ex.Message}");
+        }
+    }
+
+    private void LoadScenario(string name)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(name)) name = "MyScenario";
+            string directory = "Scenarios";
+            string path = System.IO.Path.Combine(directory, name + ".cesim");
+            if (!System.IO.File.Exists(path))
+            {
+                _cliHistory.Add($"> File not found: {path}");
+                return;
+            }
+
+            var deserializer = new CelestialMechanics.AppCore.Serialization.ProjectDeserializer();
+            var simData = deserializer.LoadProject(path);
+
+            var bodies = new System.Collections.Generic.List<PhysicsBody>();
+            int loadedIdCounter = 0;
+            foreach(var ent in simData.Manager.Entities)
+            {
+                if(ent.IsActive && ent.HasComponent<CelestialMechanics.Simulation.Components.PhysicsComponent>())
+                {
+                    var pc = ent.GetComponent<CelestialMechanics.Simulation.Components.PhysicsComponent>();
+                    int bId = pc.BodyIndex >= 0 ? pc.BodyIndex : loadedIdCounter++;
+                    bodies.Add(new PhysicsBody(bId, pc.Mass, pc.Position, pc.Velocity, BodyType.Custom) {
+                        Radius = pc.Radius,
+                        IsCollidable = pc.IsCollidable,
+                        IsActive = true,
+                        Acceleration = pc.Acceleration
+                    });
+                }
+            }
+
+            _engine.Stop();
+            _engine.SetBodies(bodies.ToArray());
+            _renderer.ClearAllHistory();
+            _engine.Start();
+            _cliHistory.Add($"> Loaded scenario from {path} with {bodies.Count} bodies.");
+        }
+        catch(System.Exception ex)
+        {
+            _cliHistory.Add($"> Error loading scenario: {ex.Message}");
+        }
     }
 
     private void RenderSimulationCliSection()
