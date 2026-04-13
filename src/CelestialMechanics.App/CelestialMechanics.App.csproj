@@ -4,6 +4,7 @@
     <ProjectReference Include="..\CelestialMechanics.Renderer\CelestialMechanics.Renderer.csproj" />
     <ProjectReference Include="..\CelestialMechanics.Simulation\CelestialMechanics.Simulation.csproj" />
     <ProjectReference Include="..\CelestialMechanics.Data\CelestialMechanics.Data.csproj" />
+    <ProjectReference Include="..\CelestialMechanics.AppCore\CelestialMechanics.AppCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

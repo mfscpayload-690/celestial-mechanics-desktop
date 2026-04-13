@@ -32,6 +32,7 @@ Thumbs.db
 *.log
 test_out.txt
 tmpclaude-*
+imgui.ini
 
 # Artifacts (if they happen to be in proj dir)
 brain/
