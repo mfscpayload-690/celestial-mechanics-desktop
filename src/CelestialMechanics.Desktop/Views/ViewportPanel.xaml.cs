@@ -28,7 +28,7 @@ public partial class ViewportPanel : UserControl
     private double _pixelsPerWorldUnit = 1.0;
     private double _halfExtentWorld = 1.0;
 
-    public MainWindowViewModel? ViewModel { get; set; }
+    public SimulationViewModel? ViewModel { get; set; }
     public RenderLoop RenderLoop { get; }
 
     public ViewportPanel()
@@ -231,7 +231,7 @@ public partial class ViewportPanel : UserControl
         ViewportCanvas.Children.Add(line);
     }
 
-    private void DrawPlacementOverlay(MainWindowViewModel vm)
+    private void DrawPlacementOverlay(SimulationViewModel vm)
     {
         if (!vm.IsAddMode || vm.PlacementPhase == PlacementPhase.Inactive)
         {
@@ -317,7 +317,7 @@ public partial class ViewportPanel : UserControl
         ViewportCanvas.Children.Add(ghost);
     }
 
-    private void SyncRendererPlacementPreview(MainWindowViewModel vm)
+    private void SyncRendererPlacementPreview(SimulationViewModel vm)
     {
         if (_renderer == null)
         {

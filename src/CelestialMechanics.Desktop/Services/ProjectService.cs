@@ -9,6 +9,7 @@ public sealed class ProjectService
 {
     private const string RecentProjectsFileName = "recent_projects.json";
     private const string ProjectMetadataFileName = "project.json";
+    private static ProjectInfo? _currentProject;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -38,6 +39,7 @@ public sealed class ProjectService
 
         WriteProjectMetadata(project);
         AddOrUpdateRecent(project);
+        SetCurrentProject(project);
         return project;
     }
 
@@ -114,7 +116,18 @@ public sealed class ProjectService
 
         WriteProjectMetadata(project);
         AddOrUpdateRecent(project);
+        SetCurrentProject(project);
         return project;
+    }
+
+    public void SetCurrentProject(ProjectInfo project)
+    {
+        _currentProject = project;
+    }
+
+    public ProjectInfo? GetCurrentProject()
+    {
+        return _currentProject;
     }
 
     public static string GetDefaultProjectsRoot()

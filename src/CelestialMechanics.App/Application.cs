@@ -45,6 +45,7 @@ public class Application
     private WorkflowEvent _pendingWorkflowEvents = WorkflowEvent.None;
     private bool _followSelectedBody;
     private ApplicationMode _mode = ApplicationMode.Simulation;
+    private bool _windowShown;
 
     public Application(IWindow window) { _window = window; }
 
@@ -238,6 +239,12 @@ public class Application
         _imguiController.Update((float)deltaTime);
         _imGuiOverlay.Render(_lastPhysicsTime, _lastRenderTime, _simulationEngine.Bodies?.Length ?? 0);
         _imguiController.Render();
+
+        if (!_windowShown)
+        {
+            _window.IsVisible = true;
+            _windowShown = true;
+        }
     }
 
     public void OnResize(Silk.NET.Maths.Vector2D<int> size)

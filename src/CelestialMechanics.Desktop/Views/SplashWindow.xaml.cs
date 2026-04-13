@@ -3,7 +3,9 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using CelestialMechanics.Desktop.Core;
 using CelestialMechanics.Desktop.Infrastructure.Security;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CelestialMechanics.Desktop.Views;
 
@@ -127,23 +129,12 @@ public partial class SplashWindow : Window
     /// <summary>
     /// Opens the Mode Select window and closes this splash.
     /// </summary>
-    private async void TransitionToModeSelect()
+    private void TransitionToModeSelect()
     {
         try
         {
-            var modeSelect = new ModeSelectWindow();
-            modeSelect.Show();
-
-            // Wait for ModeSelectWindow's fade-in to start rendering
-            // before destroying the splash — prevents brief desktop flash
-            await Task.Delay(500);
-
-            modeSelect.Activate();
-            modeSelect.Focus();
-
-            // Update application MainWindow reference before closing splash
-            Application.Current.MainWindow = modeSelect;
-
+            var appState = App.Services.GetRequiredService<AppState>();
+            appState.SetMode(AppMode.Home);
             Close();
         }
         catch (Exception ex)

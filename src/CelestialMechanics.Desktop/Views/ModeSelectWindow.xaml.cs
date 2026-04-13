@@ -5,8 +5,10 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using CelestialMechanics.Desktop.Core;
 using CelestialMechanics.Desktop.Infrastructure.Security;
 using CelestialMechanics.Desktop.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CelestialMechanics.Desktop.Views;
 
@@ -158,12 +160,8 @@ public partial class ModeSelectWindow : Window
     {
         try
         {
-            var simWindow = new SimulationWindow();
-            simWindow.Show();
-
-            // Update application MainWindow reference
-            Application.Current.MainWindow = simWindow;
-
+            var appState = App.Services.GetRequiredService<AppState>();
+            appState.SetMode(AppMode.Home);
             Close();
         }
         catch (Exception ex)

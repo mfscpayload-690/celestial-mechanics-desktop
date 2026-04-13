@@ -3,10 +3,12 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
+using CelestialMechanics.Desktop.Core;
 using CelestialMechanics.Desktop.Infrastructure.Security;
 using CelestialMechanics.Desktop.Models;
 using CelestialMechanics.Desktop.Services;
 using CelestialMechanics.Desktop.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CelestialMechanics.Desktop.Views;
 
@@ -95,7 +97,7 @@ public partial class SimulationWindow : Window
     /// </summary>
     private void ShowProjectHub()
     {
-        var projectService = new ProjectService();
+        var projectService = App.Services.GetRequiredService<ProjectService>();
         _projectHubVm = new ProjectHubViewModel(projectService);
         _projectHubVm.ProjectSelected += OnProjectSelectedFromHub;
         _projectHubVm.ExitRequested += () => Application.Current.Shutdown();
@@ -110,7 +112,7 @@ public partial class SimulationWindow : Window
     /// Called when a project is selected or created from the Project Hub.
     /// Opens the existing MainWindow backend with the selected project.
     /// </summary>
-    private async void OnProjectSelectedFromHub(ProjectInfo project)
+    private void OnProjectSelectedFromHub(ProjectInfo project)
     {
         ProjectHubLayer.Visibility = Visibility.Collapsed;
 
@@ -122,17 +124,11 @@ public partial class SimulationWindow : Window
 
         try
         {
-            // Open the existing MainWindow simulation backend
-            var mainWindow = new MainWindow();
-            mainWindow.ProjectToOpen = project;
-            mainWindow.Show();
+            var projectService = App.Services.GetRequiredService<ProjectService>();
+            projectService.SetCurrentProject(project);
 
-            // Wait for MainWindow to start rendering before closing this window
-            await Task.Delay(300);
-
-            mainWindow.Activate();
-            mainWindow.Focus();
-            Application.Current.MainWindow = mainWindow;
+            var appState = App.Services.GetRequiredService<AppState>();
+            appState.SetMode(AppMode.Simulation);
 
             Close();
         }

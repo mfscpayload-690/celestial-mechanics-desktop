@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Windows;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -16,6 +15,7 @@ public sealed partial class SceneOutlinerViewModel : ObservableObject, IDisposab
 
     public event Action<Guid>? BodySelected;
     public event Action<int>? DeleteRequested;
+    public event Action? AddBodyRequested;
 
     public ObservableCollection<SceneNodeItem> Items { get; } = new();
 
@@ -84,10 +84,7 @@ public sealed partial class SceneOutlinerViewModel : ObservableObject, IDisposab
     [RelayCommand]
     private void AddBody()
     {
-        if (Application.Current.MainWindow?.DataContext is MainWindowViewModel vm && !vm.IsAddMode)
-        {
-            vm.EnterAddModeCommand.Execute(null);
-        }
+        AddBodyRequested?.Invoke();
     }
 
     [RelayCommand]

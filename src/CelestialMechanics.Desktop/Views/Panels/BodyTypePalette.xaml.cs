@@ -45,7 +45,7 @@ public partial class BodyTypePalette : UserControl
 
         toggle.Click += (_, _) =>
         {
-            if (DataContext is MainWindowViewModel vm)
+            if (DataContext is SimulationViewModel vm)
             {
                 vm.SelectBodyType(type);
             }
@@ -91,7 +91,7 @@ public partial class BodyTypePalette : UserControl
 
     private void SelectSubtype(BodySubtype subtype)
     {
-        if (DataContext is MainWindowViewModel vm)
+        if (DataContext is SimulationViewModel vm)
         {
             vm.SelectSubtype(subtype);
             if (!vm.IsAddMode)
