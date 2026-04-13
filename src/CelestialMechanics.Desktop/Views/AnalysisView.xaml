@@ -1,0 +1,20 @@
+<UserControl x:Class="CelestialMechanics.Desktop.Views.AnalysisView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#0A0F16">
+    <Grid>
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="480">
+            <TextBlock Text="Analysis View"
+                       FontSize="28"
+                       FontWeight="SemiBold"
+                       Foreground="#E8ECF4"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,8"/>
+            <TextBlock Text="This panel is reserved for future analysis workflows."
+                       Foreground="#8FA1B9"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,20"/>
+            <Button Content="Back To Home" Click="OnBackToHomeClick" Height="36" Width="150" HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

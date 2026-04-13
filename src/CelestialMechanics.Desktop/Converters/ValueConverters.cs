@@ -5,6 +5,16 @@ using System.Windows.Media;
 
 namespace CelestialMechanics.Desktop.Converters;
 
+/// <summary>Converts a bool to Visibility (true=Visible, false=Collapsed).</summary>
+public class BoolToVisibilityConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is true ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is Visibility.Visible;
+}
+
 /// <summary>Inverts a bool then converts to Visibility.</summary>
 public class InverseBoolToVisibilityConverter : IValueConverter
 {
