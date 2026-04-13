@@ -824,11 +824,19 @@ public class GLRenderer : IDisposable
                 color = Vector4.Lerp(color, new Vector4(1.0f, 0.95f, 0.72f, 0.95f), 0.55f);
 
             Vector3? prev = null;
+            int pointIndex = 0;
+            int pointCount = path.Count;
             foreach (var point in path)
             {
                 if (prev.HasValue)
-                    _lineRenderer.AddLine(prev.Value - _currentFrameOrigin, point - _currentFrameOrigin, color);
+                {
+                    float fade = (float)pointIndex / System.Math.Max(1, pointCount - 1);
+                    Vector4 segmentColor = color;
+                    segmentColor.W *= (0.1f + 0.9f * fade); // fade from 10% to 100% of target alpha
+                    _lineRenderer.AddLine(prev.Value - _currentFrameOrigin, point - _currentFrameOrigin, segmentColor);
+                }
                 prev = point;
+                pointIndex++;
             }
         }
     }
@@ -855,11 +863,21 @@ public class GLRenderer : IDisposable
                 color = Vector4.Lerp(color, new Vector4(1.0f, 0.95f, 0.72f, 0.9f), 0.65f);
 
             Vector3? prev = null;
+            int pointIndex = 0;
+            int pointCount = trail.Count;
             foreach (var point in trail)
             {
                 if (prev.HasValue)
-                    _lineRenderer.AddLine(prev.Value - _currentFrameOrigin, point - _currentFrameOrigin, color);
+                {
+                    float fade = (float)pointIndex / System.Math.Max(1, pointCount - 1);
+                    // Square the fade for a more dramatic tail drop-off
+                    float smoothFade = fade * fade; 
+                    Vector4 segmentColor = color;
+                    segmentColor.W *= smoothFade;
+                    _lineRenderer.AddLine(prev.Value - _currentFrameOrigin, point - _currentFrameOrigin, segmentColor);
+                }
                 prev = point;
+                pointIndex++;
             }
         }
     }
