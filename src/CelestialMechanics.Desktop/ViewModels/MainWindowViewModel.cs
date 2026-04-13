@@ -22,6 +22,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly SimulationService _simService;
     private readonly SceneService _sceneService;
+    private readonly DesktopSelectionContext _selectionContext;
     private readonly GLRenderer _renderer;
     private readonly ProjectService _projectService;
     private readonly Dispatcher _dispatcher;
@@ -220,7 +221,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // 1. Create services
         _simService = new SimulationService();
-        _renderer = new GLRenderer();
+        _selectionContext = new DesktopSelectionContext();
+        _renderer = new GLRenderer(_selectionContext);
         _sceneService = new SceneService();
         _projectService = new ProjectService();
 
@@ -281,6 +283,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         ProjectsListVm.CancelRequested += () => NavState = NavigationState.SimulationMenu;
 
         // File Menu
+        FileMenuVm.NewSimulationRequested += NewSimulation;
+        FileMenuVm.OpenRequested += Open;
+        FileMenuVm.SaveRequested += Save;
+        FileMenuVm.ExitRequested += Exit;
         FileMenuVm.BackRequested += () => NavState = NavigationState.SimulationMenu;
     }
 
@@ -317,14 +323,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // Start simulation engine and UI timer
         _simService.StartSimThread();
         _simService.Play();
-        _renderer.ClearTrails();
+        _renderer.ClearAllHistory();
         _uiTimer.Start();
 
         NavState = NavigationState.SimulationIDE;
         CurrentMode = UiMode.Idle;
 
         // Reset camera to a good default view
-        _renderer.Camera.ResetToDefault();
+        _renderer.Camera.Target = System.Numerics.Vector3.Zero;
+        _renderer.Camera.Yaw = -90f;
+        _renderer.Camera.Pitch = 20f;
+        _renderer.Camera.Distance = 10f;
 
         BodyInspectorVm.ClearSelection();
         SceneOutlinerVm.Refresh();
@@ -395,7 +404,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                     engine.Config.SofteningMode = sm;
                 }
 
-                engine.ApplyConfig();
+                engine.Reconfigure();
             });
 
             _simService.SetIntegrator(state.Config.IntegratorName);
@@ -521,7 +530,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 engine.Config.SofteningMode = sm;
             }
 
-            engine.ApplyConfig();
+            engine.Reconfigure();
         });
 
         _simService.SetIntegrator(state.Config.IntegratorName);
@@ -723,12 +732,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         VelocityEndZ = PlacedZ;
         PlacementPhase = PlacementPhase.ChoosingVelocity;
 
-        // Update renderer ghost to be at confirmed position (solid)
-        _renderer.GhostPosition = new System.Numerics.Vector3(PlacedX, PlacedY, PlacedZ);
-        _renderer.GhostAlpha = 1.0f;
-        _renderer.GhostRadius = (float)GetPlacementRadius();
-        _renderer.GhostBodyType = (int)SelectedBodyType;
-        _renderer.ShowGhost = true;
+        _renderer.SetPlacementPreview(
+            CreatePlacementGhostBody(PlacedX, PlacedY, PlacedZ, 1.0f),
+            null,
+            null,
+            null);
     }
 
     /// <summary>
@@ -893,11 +901,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private void UpdateRendererGhost()
     {
-        _renderer.GhostPosition = new System.Numerics.Vector3(GhostX, GhostY, GhostZ);
-        _renderer.GhostAlpha = 0.4f;
-        _renderer.GhostRadius = (float)GetPlacementRadius();
-        _renderer.GhostBodyType = (int)SelectedBodyType;
-        _renderer.ShowGhost = true;
+        _renderer.SetPlacementPreview(
+            CreatePlacementGhostBody(GhostX, GhostY, GhostZ, 0.45f),
+            null,
+            null,
+            null);
     }
 
     private void UpdateRendererVelocityPreview()
@@ -905,23 +913,49 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         var placedPos = new Vec3d(PlacedX, PlacedY, PlacedZ);
         var cursorPos = new Vec3d(VelocityEndX, VelocityEndY, VelocityEndZ);
         var velocity = ComputeVelocityFromCursor(placedPos, cursorPos);
+        var preview = ComputeTrajectoryPreview(placedPos, velocity, 50)
+            .ToList();
 
-        // Update velocity vector line
-        _renderer.VelocityPreviewStart = new System.Numerics.Vector3(PlacedX, PlacedY, PlacedZ);
-        _renderer.VelocityPreviewEnd = new System.Numerics.Vector3(VelocityEndX, VelocityEndY, VelocityEndZ);
-        _renderer.ShowVelocityPreview = true;
-
-        // Compute and update trajectory preview
-        _renderer.TrajectoryPreview = ComputeTrajectoryPreview(placedPos, velocity, 50);
-        _renderer.ShowTrajectoryPreview = true;
+        _renderer.SetPlacementPreview(
+            CreatePlacementGhostBody(PlacedX, PlacedY, PlacedZ, 1.0f),
+            new System.Numerics.Vector3(PlacedX, PlacedY, PlacedZ),
+            new System.Numerics.Vector3(VelocityEndX, VelocityEndY, VelocityEndZ),
+            preview);
     }
 
     private void ClearRendererPreview()
     {
-        _renderer.ShowGhost = false;
-        _renderer.ShowVelocityPreview = false;
-        _renderer.ShowTrajectoryPreview = false;
-        _renderer.TrajectoryPreview = null;
+        _renderer.ClearPlacementPreview();
+    }
+
+    private RenderBody CreatePlacementGhostBody(float x, float y, float z, float alpha)
+    {
+        var color = SelectedBodyType switch
+        {
+            BodyType.Star => new System.Numerics.Vector4(1.0f, 0.82f, 0.38f, alpha),
+            BodyType.Planet => new System.Numerics.Vector4(0.35f, 0.58f, 1.0f, alpha),
+            BodyType.GasGiant => new System.Numerics.Vector4(0.87f, 0.7f, 0.45f, alpha),
+            BodyType.RockyPlanet => new System.Numerics.Vector4(0.75f, 0.48f, 0.34f, alpha),
+            BodyType.Moon => new System.Numerics.Vector4(0.76f, 0.76f, 0.82f, alpha),
+            BodyType.Asteroid => new System.Numerics.Vector4(0.58f, 0.58f, 0.52f, alpha),
+            BodyType.NeutronStar => new System.Numerics.Vector4(0.55f, 0.9f, 1.0f, alpha),
+            BodyType.BlackHole => new System.Numerics.Vector4(0.18f, 0.2f, 0.24f, alpha),
+            BodyType.Comet => new System.Numerics.Vector4(0.46f, 0.85f, 0.86f, alpha),
+            _ => new System.Numerics.Vector4(0.8f, 0.8f, 0.8f, alpha),
+        };
+
+        return new RenderBody
+        {
+            Id = -1,
+            Position = new System.Numerics.Vector3(x, y, z),
+            Radius = (float)GetPlacementRadius(),
+            Color = color,
+            BodyType = (int)SelectedBodyType,
+            VisualParams = new System.Numerics.Vector4(1f, 0.25f, 0.2f, 0.2f),
+            TextureLayer = 0,
+            StarTemperatureK = SelectedBodyType == BodyType.Star ? 5772f : 0f,
+            IsSelected = false,
+        };
     }
 
     /// <summary>
@@ -974,6 +1008,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private void DeleteBody(int bodyId)
     {
         _simService.RemoveBody(bodyId);
+        if (_selectionContext.SelectedBodyId == bodyId)
+        {
+            _selectionContext.SelectedBodyId = -1;
+        }
         _sceneService.RepopulateFromSimulation(_simService);
         BodyInspectorVm.ClearSelection();
     }
@@ -983,6 +1021,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     public void SelectBodyById(int bodyId)
     {
+        _selectionContext.SelectedBodyId = bodyId;
         var nodeId = _sceneService.GetNodeIdForBody(bodyId);
         if (nodeId.HasValue)
         {
@@ -997,6 +1036,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     public void DeselectBody()
     {
+        _selectionContext.SelectedBodyId = -1;
         _sceneService.SelectionManager.Clear();
         BodyInspectorVm.ClearSelection();
         SceneOutlinerVm.SetSelectedNodeId(null);
@@ -1032,7 +1072,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                         (float)bodies[i].Position.Y,
                         (float)bodies[i].Position.Z);
                     float dist = MathF.Max((float)bodies[i].Radius * 5f, 2f);
-                    _renderer.Camera.FlyTo(pos, dist);
+                    _renderer.Camera.Target = pos;
+                    _renderer.Camera.Distance = dist;
                     // Camera now tracks this position; future updates will keep it centered
                     break;
                 }
@@ -1076,7 +1117,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                         (float)bodies[i].Position.Y,
                         (float)bodies[i].Position.Z);
                     float dist = MathF.Max((float)bodies[i].Radius * 4f, 2f);
-                    _renderer.Camera.FlyTo(pos, dist);
+                    _renderer.Camera.Target = pos;
+                    _renderer.Camera.Distance = dist;
                     break;
                 }
             }
@@ -1129,8 +1171,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _simService.ResetScene();
 
         _sceneService.RepopulateFromSimulation(_simService);
-        _renderer.ClearTrails();
-        _renderer.SelectedInstanceIndex = -1;
+        _renderer.ClearAllHistory();
+        _selectionContext.SelectedBodyId = -1;
         BodyInspectorVm.ClearSelection();
         SceneOutlinerVm.Refresh();
         CurrentMode = UiMode.Idle;
@@ -1157,12 +1199,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnShowStarfieldChanged(bool value)
     {
-        _renderer.ShowStarfield = value;
+        _renderer.ShowBackground = value;
     }
 
     partial void OnShowTrailsChanged(bool value)
     {
-        _renderer.ShowTrails = value;
+        _renderer.ShowOrbitalTrails = value;
+        _renderer.ShowPersistentOrbitPaths = value;
     }
 
     partial void OnRightPanelTabIndexChanged(int value)
