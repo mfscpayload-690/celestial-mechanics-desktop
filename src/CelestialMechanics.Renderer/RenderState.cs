@@ -1,5 +1,6 @@
 using System.Numerics;
 using CelestialMechanics.Physics.Types;
+using CelestialMechanics.Physics.Astrophysics;
 using CelestialMechanics.Simulation;
 
 namespace CelestialMechanics.Renderer;
@@ -7,6 +8,7 @@ namespace CelestialMechanics.Renderer;
 public struct RenderBody
 {
     public int Id;
+    public float Mass;
     public Vector3 Position;
     public float Radius;
     public Vector4 Color;
@@ -59,11 +61,12 @@ public class RenderState
             Bodies[activeCount++] = new RenderBody
             {
                 Id = body.Id,
+                Mass = (float)System.Math.Max(body.Mass, 1e-6),
                 Position = pos,
                 Radius = MathF.Max(0.01f, (float)body.Radius),
                 Color = GetBodyColor(body.Type),
                 BodyType = (int)body.Type,
-                VisualParams = GetVisualParams(body.Type),
+                VisualParams = GetVisualParams(body),
                 TextureLayer = GetTextureLayer(body),
                 StarTemperatureK = GetStarTemperatureK(body),
                 IsSelected = body.Id == selectedBodyId,
@@ -94,21 +97,52 @@ public class RenderState
     };
 
     // x = visual type id, y = luminosity, z = glow intensity, w = atmosphere/rim strength
-    private static Vector4 GetVisualParams(BodyType type) => type switch
+    private static Vector4 GetVisualParams(PhysicsBody body)
     {
-        BodyType.Star => new Vector4(0f, 1.25f, 1.05f, 0.22f),
-        BodyType.Planet => new Vector4(1f, 0.05f, 0.05f, 0.35f),
-        BodyType.RockyPlanet => new Vector4(1f, 0.04f, 0.04f, 0.35f),
-        BodyType.GasGiant => new Vector4(2f, 0.11f, 0.1f, 0.24f),
-        BodyType.Moon => new Vector4(3f, 0.02f, 0.02f, 0.1f),
-        BodyType.Asteroid => new Vector4(4f, 0.02f, 0.02f, 0.08f),
-        BodyType.Comet => new Vector4(4f, 0.03f, 0.03f, 0.12f),
-        BodyType.NeutronStar => new Vector4(5f, 1.45f, 1.3f, 0.28f),
-        // Use 7.0 so black holes route through the dedicated BH shading branch
-        // in sphere.frag (visualType >= 6.5).
-        BodyType.BlackHole => new Vector4(7f, 0.14f, 0.45f, 0.55f),
-        _ => new Vector4(1f, 0.03f, 0.03f, 0.2f),
-    };
+        float baseVisualType = body.Type switch
+        {
+            BodyType.Star => 0f,
+            BodyType.Planet => 1f,
+            BodyType.RockyPlanet => 1f,
+            BodyType.GasGiant => 2f,
+            BodyType.Moon => 3f,
+            BodyType.Asteroid => 4f,
+            BodyType.Comet => 4f,
+            BodyType.NeutronStar => 5f,
+            BodyType.BlackHole => 7f,
+            _ => 1f,
+        };
+
+        double luminousPower = System.Math.Max(body.Luminosity, 0.0);
+        float luminosity = (float)System.Math.Clamp(Units.RenderScale(luminousPower / 1.0e20), 0.01, 4.5);
+
+        if (body.Type == BodyType.Star)
+            luminosity = System.MathF.Max(luminosity, 0.85f);
+        else if (body.Type == BodyType.NeutronStar)
+            luminosity = System.MathF.Max(luminosity, 1.25f);
+        else if (body.Type == BodyType.BlackHole)
+            luminosity = System.MathF.Max(luminosity, 0.1f);
+
+        float glow = body.Type switch
+        {
+            BodyType.Star => 1.0f + 0.18f * luminosity,
+            BodyType.NeutronStar => 1.3f + 0.2f * luminosity,
+            BodyType.BlackHole => 0.45f,
+            _ => 0.02f + 0.04f * luminosity,
+        };
+
+        float rim = body.Type switch
+        {
+            BodyType.Planet or BodyType.RockyPlanet => 0.35f,
+            BodyType.GasGiant => 0.24f,
+            BodyType.BlackHole => 0.55f,
+            BodyType.Star => 0.22f,
+            BodyType.NeutronStar => 0.28f,
+            _ => 0.12f,
+        };
+
+        return new Vector4(baseVisualType, luminosity, glow, rim);
+    }
 
     private static float GetTextureLayer(PhysicsBody body)
     {
@@ -134,11 +168,14 @@ public class RenderState
 
     private static float GetStarTemperatureK(PhysicsBody body)
     {
+        if (body.Type != BodyType.Star && body.Type != BodyType.NeutronStar)
+            return 0f;
+
+        if (body.Temperature > 0.0)
+            return (float)System.Math.Clamp(body.Temperature, 1200.0, 50000.0);
+
         if (body.Type == BodyType.NeutronStar)
             return 12000f;
-
-        if (body.Type != BodyType.Star)
-            return 0f;
 
         const double solarRadiusAu = 0.00465047;
         double massSolar = System.Math.Max(body.Mass, 0.08);

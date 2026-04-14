@@ -39,6 +39,7 @@ public class Application
     private double _lastRenderTime;
     private RuntimeDiagnosticsLogger? _runtimeDiagnostics;
     private readonly SelectionContext _selectionContext = new();
+    private readonly RenderSettings _renderSettings = new();
     private int _autoCentralBodyId = -1;
     private int _lastSelectionBodyId = -1;
     private ApplicationMode _lastMode = ApplicationMode.Simulation;
@@ -79,7 +80,7 @@ public class Application
         SetupTwoBodyOrbit();
 
         // Initialize renderer
-        _renderer = new GLRenderer(_selectionContext);
+        _renderer = new GLRenderer(_renderSettings, _selectionContext);
         _renderer.Initialize(_gl);
 
         // Input handling

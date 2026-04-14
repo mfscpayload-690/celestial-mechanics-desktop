@@ -24,13 +24,25 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
     private readonly DesktopSelectionContext _selectionContext;
     private readonly GLRenderer _renderer;
     private readonly ProjectService _projectService;
+    private readonly NavigationService _navigationService;
+    private readonly RenderSettings _renderSettings;
     private readonly DispatcherTimer _uiTimer;
+    private readonly Stack<PhysicsBody[]> _undoStack = new();
+    private readonly Stack<PhysicsBody[]> _redoStack = new();
+    private const int MaxUndoDepth = 32;
 
     // ── Service Accessors (for code-behind viewport initialization) ──
 
     public SimulationService SimService => _simService;
     public SceneService SceneService => _sceneService;
     public GLRenderer Renderer => _renderer;
+    public RenderSettings RenderSettings => _renderSettings;
+
+    public double SimulationSpeed
+    {
+        get => TimeScale;
+        private set => TimeScale = System.Math.Clamp(value, 0.1, 64.0);
+    }
 
     /// <summary>Reference to the render loop for reading FPS metrics. Set after viewport init.</summary>
     public RenderLoop? ActiveRenderLoop { get; set; }
@@ -217,16 +229,21 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
         Dispatcher dispatcher,
         SimulationService simulationService,
         SceneService sceneService,
-        ProjectService projectService)
+        ProjectService projectService,
+        NavigationService navigationService,
+        RenderSettings renderSettings)
     {
         // 1. Wire shared services
         _simService = simulationService;
         _sceneService = sceneService;
         _projectService = projectService;
+        _navigationService = navigationService;
+        _renderSettings = renderSettings;
 
         // 2. Create renderer-specific context
         _selectionContext = new DesktopSelectionContext();
-        _renderer = new GLRenderer(_selectionContext);
+        _renderer = new GLRenderer(_renderSettings, _selectionContext);
+        _renderer.ShowAccretionDisks = _renderSettings.EnableParticles;
 
         // 3. Create child ViewModels — Navigation (legacy in-panel menu)
         ModeSelectionVm = new ModeSelectionViewModel();
@@ -252,6 +269,19 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
             Interval = TimeSpan.FromMilliseconds(50),
         };
         _uiTimer.Tick += OnUiTimerTick;
+
+        _renderSettings.ShowGrid = _renderer.ShowGrid;
+        _renderSettings.ShowTrails = _renderSettings.EnableTrails;
+        _renderSettings.ShowOrbits = _renderSettings.EnableTrails;
+        _renderSettings.ShowGravitationalWaves = _renderSettings.EnableWaves;
+        _renderSettings.ShowVelocityVectors = _renderer.ShowVelocityArrows;
+        _renderSettings.ShowInspector = ShowInspector;
+        _renderSettings.ShowStatistics = ShowStatusBar;
+
+        ShowGrid = _renderSettings.ShowGrid;
+        ShowTrails = _renderSettings.ShowTrails;
+        ShowVelocityArrows = _renderSettings.ShowVelocityVectors;
+        ShowStarfield = _renderer.ShowBackground;
     }
 
     // ── Navigation Wiring ────────────────────────────────────────────
@@ -348,6 +378,9 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
 
         BodyInspectorVm.ClearSelection();
         SceneOutlinerVm.Refresh();
+        _undoStack.Clear();
+        _redoStack.Clear();
+        MarkProjectSaved();
     }
 
     /// <summary>
@@ -469,11 +502,15 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
         if (IsModalVisible)
             return;
 
+        RecordUndoSnapshot();
+
         // Reset existing simulation to empty scene
         _simService.ResetScene();
         _sceneService.RepopulateFromSimulation(_simService);
         BodyInspectorVm.ClearSelection();
+        SceneOutlinerVm.Refresh();
         CurrentMode = UiMode.Idle;
+        MarkProjectDirty();
     }
 
     [RelayCommand]
@@ -498,6 +535,9 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
             _sceneService.RepopulateFromSimulation(_simService);
             SceneOutlinerVm.Refresh();
             BodyInspectorVm.ClearSelection();
+            _undoStack.Clear();
+            _redoStack.Clear();
+            MarkProjectSaved();
         }
         catch
         {
@@ -510,12 +550,460 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
     {
         if (CurrentProject == null) return;
         SaveProjectState(CurrentProject);
+        MarkProjectSaved();
     }
 
     [RelayCommand]
     private void Exit()
     {
-        System.Windows.Application.Current.Shutdown();
+        if (!_projectService.IsSaved && !ShowSaveDialog())
+        {
+            return;
+        }
+
+        _simService.Pause();
+        _simService.StopSimThread();
+        _uiTimer.Stop();
+        _renderer.ClearAllHistory();
+        _selectionContext.SelectedBodyId = -1;
+        BodyInspectorVm.ClearSelection();
+        NavState = NavigationState.ModeSelection;
+        CurrentMode = UiMode.Idle;
+        _navigationService.NavigateToHome();
+    }
+
+    [RelayCommand]
+    private void CloseProject() => Exit();
+
+    [RelayCommand]
+    private void NewProject()
+    {
+        NewProjectVm.Reset();
+        NavState = NavigationState.NewProject;
+    }
+
+    [RelayCommand]
+    private void OpenProject()
+    {
+        ProjectsListVm.RefreshProjects();
+        NavState = NavigationState.ProjectsList;
+    }
+
+    [RelayCommand]
+    private void SaveProject() => Save();
+
+    [RelayCommand]
+    private void SaveAs()
+    {
+        if (CurrentProject == null)
+        {
+            return;
+        }
+
+        Save();
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "Simulation State|*.json|All Files|*.*",
+            FileName = "simulation_state.json",
+            InitialDirectory = CurrentProject.Path,
+            OverwritePrompt = true,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var sourcePath = Path.Combine(CurrentProject.Path, "simulation_state.json");
+        if (!File.Exists(sourcePath))
+        {
+            return;
+        }
+
+        File.Copy(sourcePath, dialog.FileName, overwrite: true);
+    }
+
+    [RelayCommand]
+    private void Reset() => ResetSimulation();
+
+    [RelayCommand]
+    private void Undo()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        _redoStack.Push(CaptureBodiesSnapshot());
+        RestoreBodiesFromSnapshot(_undoStack.Pop());
+        MarkProjectDirty();
+    }
+
+    [RelayCommand]
+    private void Redo()
+    {
+        if (_redoStack.Count == 0)
+        {
+            return;
+        }
+
+        _undoStack.Push(CaptureBodiesSnapshot());
+        RestoreBodiesFromSnapshot(_redoStack.Pop());
+        MarkProjectDirty();
+    }
+
+    [RelayCommand]
+    private void ClearBodies()
+    {
+        RecordUndoSnapshot();
+        _simService.ResetScene();
+        _sceneService.RepopulateFromSimulation(_simService);
+        SceneOutlinerVm.Refresh();
+        BodyInspectorVm.ClearSelection();
+        _selectionContext.SelectedBodyId = -1;
+        MarkProjectDirty();
+    }
+
+    [RelayCommand]
+    private void ToggleBloom()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleParticles()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleWaves()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleHdr()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleReflections()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleGlowScaling()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleExplosions()
+    {
+        ApplyRenderSettingsToRenderer();
+    }
+
+    [RelayCommand]
+    private void ToggleGrid()
+    {
+        ShowGrid = _renderSettings.ShowGrid;
+    }
+
+    [RelayCommand]
+    private void ToggleAxes()
+    {
+        _renderSettings.ShowAxes = _renderSettings.ShowAxes;
+    }
+
+    [RelayCommand]
+    private void ToggleOrbits()
+    {
+        _renderer.ShowOrbitalTrails = _renderSettings.ShowOrbits;
+        _renderer.ShowPersistentOrbitPaths = _renderSettings.ShowOrbits;
+    }
+
+    [RelayCommand]
+    private void ToggleTrails()
+    {
+        _renderSettings.EnableTrails = _renderSettings.ShowTrails;
+        ShowTrails = _renderSettings.ShowTrails;
+        _renderer.ShowOrbitalTrails = ShowTrails;
+        _renderer.ShowPersistentOrbitPaths = ShowTrails;
+    }
+
+    [RelayCommand]
+    private void ToggleVelocityVectors()
+    {
+        ShowVelocityArrows = _renderSettings.ShowVelocityVectors;
+    }
+
+    [RelayCommand]
+    private void ToggleForceVectors()
+    {
+        _renderSettings.ShowForceVectors = _renderSettings.ShowForceVectors;
+    }
+
+    [RelayCommand]
+    private void ToggleBoundingBoxes()
+    {
+        _renderSettings.ShowBoundingBoxes = _renderSettings.ShowBoundingBoxes;
+    }
+
+    [RelayCommand]
+    private void ToggleInspector()
+    {
+        ShowInspector = _renderSettings.ShowInspector;
+    }
+
+    [RelayCommand]
+    private void ToggleStats()
+    {
+        ShowStatusBar = _renderSettings.ShowStatistics;
+    }
+
+    [RelayCommand]
+    private void Step()
+    {
+        _simService.Step();
+        _sceneService.RepopulateFromSimulation(_simService);
+        SceneOutlinerVm.Refresh();
+        BodyInspectorVm.RefreshIfSelected();
+        MarkProjectDirty();
+    }
+
+    [RelayCommand]
+    private void SpeedUp()
+    {
+        SimulationSpeed *= 2.0;
+    }
+
+    [RelayCommand]
+    private void SlowDown()
+    {
+        SimulationSpeed *= 0.5;
+    }
+
+    [RelayCommand]
+    private void CreatePlanet()
+    {
+        CreateBodyPreset(BodyType.Planet, mass: 0.001, radius: 0.03, temperature: 288.0, luminosity: 0.0);
+    }
+
+    [RelayCommand]
+    private void CreateStar()
+    {
+        CreateBodyPreset(BodyType.Star, mass: 1.2, radius: 0.12, temperature: 6200.0, luminosity: 1.0);
+    }
+
+    [RelayCommand]
+    private void CreateBlackHole()
+    {
+        CreateBodyPreset(BodyType.BlackHole, mass: 12.0, radius: 1e-4, temperature: 5.0e4, luminosity: 0.0);
+    }
+
+    [RelayCommand]
+    private void TriggerSupernova()
+    {
+        RecordUndoSnapshot();
+
+        int targetBodyId = -1;
+        var selectedNodeId = _sceneService.SelectionManager.SelectedEntity;
+        if (selectedNodeId.HasValue)
+        {
+            var selectedBodyId = _sceneService.GetBodyIdForNode(selectedNodeId.Value);
+            if (selectedBodyId.HasValue)
+            {
+                targetBodyId = selectedBodyId.Value;
+            }
+        }
+
+        bool triggered = false;
+        _simService.WithEngineLock(engine =>
+        {
+            if (targetBodyId < 0)
+            {
+                var candidates = engine.Bodies.Where(b => b.IsActive && (b.Type == BodyType.Star || b.Type == BodyType.NeutronStar)).ToArray();
+                if (candidates.Length > 0)
+                {
+                    targetBodyId = candidates[0].Id;
+                }
+            }
+
+            if (targetBodyId >= 0)
+            {
+                triggered = engine.TriggerSupernova(targetBodyId);
+            }
+        });
+
+        if (!triggered)
+        {
+            System.Windows.MessageBox.Show(
+                "No eligible star selected. Select an active star or neutron star first.",
+                "Trigger Supernova",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        _sceneService.RepopulateFromSimulation(_simService);
+        SceneOutlinerVm.Refresh();
+        MarkProjectDirty();
+    }
+
+    [RelayCommand]
+    private void TriggerBigBang()
+    {
+        _renderSettings.EnableBigBangMode = true;
+        _simService.LogEvent(SimEventType.Warning, "Big Bang burst requested from top menu.");
+    }
+
+    [RelayCommand]
+    private void ShowAbout()
+    {
+        System.Windows.MessageBox.Show(
+            "CelestialMechanics Desktop\nHigh-fidelity orbital simulation, OpenGL rendering, and analysis tools.",
+            "About CelestialMechanics",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Information);
+    }
+
+    [RelayCommand]
+    private void ShowControls()
+    {
+        System.Windows.MessageBox.Show(
+            "Controls Guide\n\nSpace: Play/Pause\nDelete: Delete selected body\nCtrl+S: Save\nCtrl+O: Open\nMouse: Orbit/Pan/Zoom in viewport",
+            "Controls Guide",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Information);
+    }
+
+    [RelayCommand]
+    private void ShowDiagnostics()
+    {
+        var diagnostics = $"Runtime Diagnostics\n\nState: {SimulationState}\nSpeed: {SimulationSpeed:F2}x\n{FpsText}\n{PhysicsTimeText}\n{RenderTimeText}\n{BodyCountText}\n{TotalEnergyText}\n{MomentumText}";
+        System.Windows.MessageBox.Show(
+            diagnostics,
+            "Diagnostics",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Information);
+    }
+
+    private bool ShowSaveDialog()
+    {
+
+        var result = System.Windows.MessageBox.Show(
+            "You have unsaved simulation changes. Save before leaving this panel?",
+            "Unsaved Changes",
+            System.Windows.MessageBoxButton.YesNoCancel,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (result == System.Windows.MessageBoxResult.Cancel)
+        {
+            return false;
+        }
+
+        if (result == System.Windows.MessageBoxResult.Yes)
+        {
+            Save();
+        }
+
+        return true;
+    }
+
+    private void MarkProjectDirty()
+    {
+        _projectService.MarkDirty();
+    }
+
+    private void MarkProjectSaved()
+    {
+        _projectService.MarkSaved();
+    }
+
+    private PhysicsBody[] CaptureBodiesSnapshot()
+    {
+        PhysicsBody[] snapshot = Array.Empty<PhysicsBody>();
+        _simService.WithEngineLock(engine =>
+        {
+            snapshot = engine.Bodies.ToArray();
+        });
+
+        return snapshot;
+    }
+
+    private void RecordUndoSnapshot()
+    {
+        if (_undoStack.Count >= MaxUndoDepth)
+        {
+            _undoStack.Clear();
+        }
+
+        _undoStack.Push(CaptureBodiesSnapshot());
+        _redoStack.Clear();
+    }
+
+    private void RestoreBodiesFromSnapshot(PhysicsBody[] bodies)
+    {
+        _simService.WithEngineLock(engine =>
+        {
+            engine.SetBodies(bodies.ToArray());
+        });
+
+        _sceneService.RepopulateFromSimulation(_simService);
+        SceneOutlinerVm.Refresh();
+        BodyInspectorVm.RefreshIfSelected();
+    }
+
+    private void CreateBodyPreset(BodyType type, double mass, double radius, double temperature, double luminosity)
+    {
+        RecordUndoSnapshot();
+
+        _simService.WithEngineLock(engine =>
+        {
+            int nextId = engine.Bodies.Length == 0 ? 1 : engine.Bodies.Max(b => b.Id) + 1;
+            double laneOffset = ((nextId % 5) - 2) * 0.8;
+            var body = new PhysicsBody(
+                nextId,
+                mass,
+                new Vec3d(laneOffset, 0.0, 0.0),
+                Vec3d.Zero,
+                type)
+            {
+                Radius = System.Math.Max(radius, 1e-4),
+                Temperature = temperature,
+                Luminosity = luminosity,
+                HeatCapacity = type == BodyType.BlackHole ? 1.0e8 : 1.5e3,
+                IsActive = true,
+                IsCollidable = true,
+            };
+            engine.AddBody(body);
+        });
+
+        _sceneService.RepopulateFromSimulation(_simService);
+        SceneOutlinerVm.Refresh();
+        MarkProjectDirty();
+    }
+
+    private void ApplyRenderSettingsToRenderer()
+    {
+        _renderSettings.EnableTrails = _renderSettings.ShowTrails;
+        _renderSettings.EnableWaves = _renderSettings.ShowGravitationalWaves;
+
+        ShowGrid = _renderSettings.ShowGrid;
+        ShowTrails = _renderSettings.ShowTrails;
+        ShowVelocityArrows = _renderSettings.ShowVelocityVectors;
+        ShowInspector = _renderSettings.ShowInspector;
+        ShowStatusBar = _renderSettings.ShowStatistics;
+
+        _renderer.ShowGrid = _renderSettings.ShowGrid;
+        _renderer.ShowVelocityArrows = _renderSettings.ShowVelocityVectors;
+        _renderer.ShowOrbitalTrails = _renderSettings.ShowTrails || _renderSettings.ShowOrbits;
+        _renderer.ShowPersistentOrbitPaths = _renderSettings.ShowOrbits;
+        _renderer.ShowAccretionDisks = _renderSettings.EnableParticles;
     }
 
     private void ApplySimulationState(SimulationSaveState state)
@@ -800,6 +1288,8 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
         var cursorPos = new Vec3d(VelocityEndX, VelocityEndY, VelocityEndZ);
         var velocity = ComputeVelocityFromCursor(placedPos, cursorPos);
 
+        RecordUndoSnapshot();
+
         _simService.WithEngineLock(engine =>
         {
             int nextId = (engine.Bodies?.Length ?? 0) + 1;
@@ -814,6 +1304,7 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
 
         _sceneService.RepopulateFromSimulation(_simService);
         SceneOutlinerVm.Refresh();
+        MarkProjectDirty();
 
         // Return to ChoosingPosition for continuous placement
         PlacementPhase = PlacementPhase.ChoosingPosition;
@@ -847,6 +1338,8 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
 
         var placedPos = new Vec3d(PlacedX, PlacedY, PlacedZ);
 
+        RecordUndoSnapshot();
+
         _simService.WithEngineLock(engine =>
         {
             int nextId = (engine.Bodies?.Length ?? 0) + 1;
@@ -861,6 +1354,7 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
 
         _sceneService.RepopulateFromSimulation(_simService);
         SceneOutlinerVm.Refresh();
+        MarkProjectDirty();
 
         // Return to ChoosingPosition for continuous placement
         PlacementPhase = PlacementPhase.ChoosingPosition;
@@ -1039,6 +1533,7 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
     /// <summary>Deletes a body by its engine ID.</summary>
     private void DeleteBody(int bodyId)
     {
+        RecordUndoSnapshot();
         _simService.RemoveBody(bodyId);
         if (_selectionContext.SelectedBodyId == bodyId)
         {
@@ -1046,6 +1541,7 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
         }
         _sceneService.RepopulateFromSimulation(_simService);
         BodyInspectorVm.ClearSelection();
+        MarkProjectDirty();
     }
 
     /// <summary>
@@ -1199,6 +1695,7 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ResetSimulation()
     {
+        RecordUndoSnapshot();
         _simService.Pause();
         _simService.ResetScene();
 
@@ -1208,6 +1705,7 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
         BodyInspectorVm.ClearSelection();
         SceneOutlinerVm.Refresh();
         CurrentMode = UiMode.Idle;
+        MarkProjectDirty();
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1221,11 +1719,13 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
 
     partial void OnShowGridChanged(bool value)
     {
+        _renderSettings.ShowGrid = value;
         _renderer.ShowGrid = value;
     }
 
     partial void OnShowVelocityArrowsChanged(bool value)
     {
+        _renderSettings.ShowVelocityVectors = value;
         _renderer.ShowVelocityArrows = value;
     }
 
@@ -1236,6 +1736,8 @@ public sealed partial class SimulationViewModel : ObservableObject, IDisposable
 
     partial void OnShowTrailsChanged(bool value)
     {
+        _renderSettings.ShowTrails = value;
+        _renderSettings.EnableTrails = value;
         _renderer.ShowOrbitalTrails = value;
         _renderer.ShowPersistentOrbitPaths = value;
     }

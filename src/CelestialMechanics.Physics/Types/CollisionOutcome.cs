@@ -8,5 +8,6 @@ public enum CollisionOutcome
     Bounce,
     Merge,
     Fragmentation,
-    Accretion
+    Accretion,
+    CatastrophicDisruption
 }

@@ -8,6 +8,7 @@ using CelestialMechanics.Desktop.Infrastructure.Security;
 using CelestialMechanics.Desktop.Services;
 using CelestialMechanics.Desktop.ViewModels;
 using CelestialMechanics.Desktop.Views;
+using CelestialMechanics.Renderer;
 using CelestialMechanics.Simulation;
 
 namespace CelestialMechanics.Desktop;
@@ -44,6 +45,7 @@ public partial class App : Application
 
                 // ── Backend engine (already exists) ──────────────
                 services.AddSingleton<SimulationEngine>();
+                services.AddSingleton<RenderSettings>();
 
                 // ── Application services ─────────────────────────
                 services.AddSingleton<SimulationService>();
@@ -64,7 +66,9 @@ public partial class App : Application
                     Dispatcher.CurrentDispatcher,
                     sp.GetRequiredService<SimulationService>(),
                     sp.GetRequiredService<SceneService>(),
-                    sp.GetRequiredService<ProjectService>()));
+                    sp.GetRequiredService<ProjectService>(),
+                    sp.GetRequiredService<NavigationService>(),
+                    sp.GetRequiredService<RenderSettings>()));
 
                 // ── View host targets ────────────────────────────
                 services.AddSingleton<HomeView>();

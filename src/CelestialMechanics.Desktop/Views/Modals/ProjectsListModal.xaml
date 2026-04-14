@@ -94,6 +94,16 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel>
+                                <StackPanel.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open"
+                                                  Command="{Binding DataContext.OpenProjectItemCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                  CommandParameter="{Binding}"/>
+                                        <MenuItem Header="Delete"
+                                                  Command="{Binding DataContext.DeleteProjectItemCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                  CommandParameter="{Binding}"/>
+                                    </ContextMenu>
+                                </StackPanel.ContextMenu>
                                 <TextBlock Text="{Binding Name}"
                                            FontSize="14" FontWeight="SemiBold"
                                            Foreground="{StaticResource TextPrimaryBrush}"/>

@@ -16,6 +16,8 @@ uniform float uGlobalGlow;
 uniform float uGlobalSaturation;
 uniform int uUseAlbedoAtlas;
 uniform sampler2DArray uBodyAlbedoAtlas;
+uniform sampler2D uScreenTexture;
+uniform sampler2D uDepthTexture;
 uniform float uAlbedoBlend;
 uniform int uEnableStarLighting;
 uniform int uStarLightCount;
@@ -41,6 +43,14 @@ uniform float uBhBloomScale;
 uniform int uBhDebugMode;        // 0=none, 1=horizon, 2=ring, 3=warp, 4=optical depth
 uniform float uBhParticleHeat;
 uniform float uBhParticleDensity;
+uniform int uEnableHdr;
+uniform float uExposure;
+uniform int uEnableReflections;
+uniform float uReflectionScale;
+uniform int uMaxReflectionSamples;
+uniform vec2 uResolution;
+uniform int uEnableGlowScaling;
+uniform float uGlowDistanceScale;
 out vec4 FragColor;
 
 vec3 toneMapAces(vec3 x)
@@ -242,6 +252,42 @@ float traceShadowRay(vec3 origin, vec3 lightPos, vec3 selfCenter, float selfRadi
     return clamp(visibility, 0.05, 1.0);
 }
 
+vec3 sampleScreenReflections(vec3 viewDir, vec3 normal)
+{
+    if (uEnableReflections == 0)
+        return vec3(0.0);
+
+    vec2 safeResolution = max(uResolution, vec2(1.0));
+    vec2 uv = gl_FragCoord.xy / safeResolution;
+    vec3 reflected = reflect(-viewDir, normal);
+
+    int samples = clamp(uMaxReflectionSamples, 1, 16);
+    vec3 accum = vec3(0.0);
+    float wsum = 0.0;
+
+    for (int i = 0; i < 16; i++)
+    {
+        if (i >= samples)
+            break;
+
+        float t = float(i + 1) / float(samples);
+        vec2 suv = uv + reflected.xy * uReflectionScale * t;
+        if (suv.x <= 0.0 || suv.x >= 1.0 || suv.y <= 0.0 || suv.y >= 1.0)
+            break;
+
+        float sceneDepth = texture(uDepthTexture, suv).r;
+        float depthWeight = smoothstep(0.05, 1.0, sceneDepth);
+        float weight = (1.0 - 0.6 * t) * depthWeight;
+        accum += texture(uScreenTexture, suv).rgb * weight;
+        wsum += weight;
+    }
+
+    if (wsum <= 1e-5)
+        return vec3(0.0);
+
+    return accum / wsum;
+}
+
 vec3 shadeBlackHole(vec3 norm, vec3 viewDir, vec3 localN, out float horizonMask, out float ringMask, out float warpMask, out float opticalDepthMask)
 {
     float edge = 1.0 - abs(dot(norm, viewDir));
@@ -344,15 +390,12 @@ void main()
         return;
     }
 
-    float ambient = clamp(uAmbientFloor, 0.01, 0.5);
     float diff = 0.0;
-    float spec = 0.0;
-    vec3 lightTint = vec3(1.0);
+    vec3 directDiffuse = vec3(0.0);
+    vec3 directSpec = vec3(0.0);
 
     if (uEnableStarLighting != 0 && uStarLightCount > 0)
     {
-        vec3 accumulatedTint = vec3(0.0);
-
         for (int i = 0; i < 8; i++)
         {
             if (i >= uStarLightCount)
@@ -364,27 +407,24 @@ void main()
                 continue;
 
             vec3 lightDir = lightVec / dist;
-            float attenuation = uStarLightIntensity[i] / (1.0 + uStarLightFalloff * dist * dist);
+            float distanceSq = dist * dist + 0.001;
+            float attenuation = 1.0 / distanceSq;
+            float intensity = max(uStarLightIntensity[i], 0.0);
+            vec3 radiance = uStarLightColor[i] * intensity * attenuation;
+            radiance *= 50.0;
+
             vec3 shadowOrigin = vFragPos + norm * (0.002 + 0.02 * vBodyRadius);
             float shadow = traceShadowRay(shadowOrigin, uStarLights[i], vBodyCenter, max(vBodyRadius, 0.01));
 
             float lambert = max(dot(norm, lightDir), 0.0);
-            diff += lambert * attenuation * shadow;
+            vec3 diffuse = radiance * lambert * shadow;
+            directDiffuse += diffuse;
+            diff += dot(diffuse, vec3(0.2126, 0.7152, 0.0722));
 
             vec3 halfDir = normalize(lightDir + viewDir);
-            spec += pow(max(dot(norm, halfDir), 0.0), 64.0) * attenuation * shadow;
-
-            accumulatedTint += uStarLightColor[i] * attenuation * shadow;
+            float specTerm = pow(max(dot(norm, halfDir), 0.0), 64.0);
+            directSpec += radiance * specTerm * 0.28 * shadow;
         }
-
-        lightTint = max(accumulatedTint, vec3(0.08));
-    }
-    else
-    {
-        vec3 fallbackLightDir = normalize(vec3(0.3, 1.0, 0.5));
-        diff = max(dot(norm, fallbackLightDir), 0.0);
-        vec3 halfDir = normalize(fallbackLightDir + viewDir);
-        spec = pow(max(dot(norm, halfDir), 0.0), 64.0);
     }
 
     vec3 albedo = applyBodyTexture(vColor.rgb, localN, visualType);
@@ -406,7 +446,9 @@ void main()
     vec3 rimColor = mix(albedo * 0.55, vec3(0.9, 0.95, 1.0), 0.35);
 
     float starPulse = 0.92 + 0.08 * sin(uTime * 1.7 + localN.y * 8.0);
-    float emissive = luminosity * (visualType < 0.5 ? starPulse : 1.0);
+    float emissive = 0.0;
+    if (visualType < 0.5 || visualType >= 5.0)
+        emissive = luminosity * (visualType < 0.5 ? starPulse : 1.0);
 
     if (visualType < 0.5 && vStarTemperatureK > 0.0)
     {
@@ -414,13 +456,26 @@ void main()
         emissive *= (0.92 + 0.24 * tempBoost);
     }
 
-    diff = min(diff, 4.0);
-    spec = min(spec, 2.5);
+    diff = min(diff, 8.0);
 
-    vec3 lit = ambient * albedo + diff * albedo * lightTint + spec * 0.35 * lightTint;
+    vec3 lit = directDiffuse * albedo + directSpec;
     vec3 glow = rimColor * (rim * glowStrength + atmosphere * rim * 0.45) * uGlobalGlow;
 
     vec3 result = lit + emissive * uGlobalLuminosity * albedo + glow;
+
+    if (uEnableGlowScaling != 0)
+    {
+        float distanceToCamera = length(uViewPos - vFragPos);
+        float distanceFactor = clamp(distanceToCamera / max(uGlowDistanceScale, 0.001), 0.0, 1.0);
+        vec3 glowColor = albedo * emissive * distanceFactor * 5.0;
+        result = mix(result, glowColor, distanceFactor);
+    }
+
+    vec3 reflectionColor = sampleScreenReflections(viewDir, norm);
+    float reflectivity = clamp(0.05 + glowStrength * 0.25, 0.02, 0.7);
+    float fresnel = pow(1.0 - max(dot(viewDir, norm), 0.0), 5.0);
+    result = mix(result, reflectionColor, reflectivity);
+    result += reflectionColor * fresnel;
 
     float bloom = 0.0;
     if (visualType < 0.5)
@@ -435,7 +490,17 @@ void main()
 
     float luma = dot(result, vec3(0.2126, 0.7152, 0.0722));
     result = mix(vec3(luma), result, clamp(uGlobalSaturation, 0.0, 2.0));
-    result = toneMapAces(result);
+
+    if (uEnableHdr != 0)
+    {
+        vec3 hdrColor = result * max(uExposure, 0.01);
+        result = vec3(1.0) - exp(-hdrColor);
+    }
+    else
+    {
+        result = clamp(result, 0.0, 1.0);
+    }
+
     result = pow(result, vec3(1.0 / 2.2));
 
     FragColor = vec4(result, clamp(vColor.a, 0.0, 1.0));

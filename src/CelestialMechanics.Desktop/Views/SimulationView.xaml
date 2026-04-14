@@ -31,76 +31,179 @@
         </Grid.RowDefinitions>
 
         <!-- ═══════════════════════════════════════════════════════════
-             ROW 0 – COMPACT TOP TOOLBAR
-             Title + sim readouts + view toggles + FPS
+             ROW 0 – PROFESSIONAL MENU + COMPACT TOOLBAR
              ═══════════════════════════════════════════════════════════ -->
-        <Border Grid.Row="0" Background="{StaticResource MenuBarBackground}"
-                BorderBrush="{StaticResource BorderBaseBrush}" BorderThickness="0,0,0,1"
-                Visibility="{Binding IsIdeActive, Converter={StaticResource BoolToVis}}">
-            <DockPanel Height="32" Margin="10,0">
-                <!-- Left: Title -->
-                <TextBlock DockPanel.Dock="Left"
-                           Text="☉ CELESTIAL MECHANICS"
-                           Foreground="{StaticResource AccentCyanBrush}"
-                           FontSize="12" FontWeight="Bold" FontFamily="Consolas"
-                           VerticalAlignment="Center" Margin="0,0,20,0"/>
+        <Grid Grid.Row="0" Visibility="{Binding IsIdeActive, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-                <!-- Left: Sim data readouts -->
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="SIM TIME:" Foreground="{StaticResource TextSecondaryBrush}"
-                               FontSize="10" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                    <TextBlock Text="{Binding SimTimeText}" Foreground="{StaticResource TextDataBrush}"
-                               FontSize="10" FontFamily="Consolas" FontWeight="SemiBold"
-                               VerticalAlignment="Center" Margin="0,0,16,0" MinWidth="80"/>
+            <Menu Grid.Row="0" DockPanel.Dock="Top" Style="{StaticResource MenuBarStyle}">
+                <MenuItem Header="File">
+                    <MenuItem Header="New Project" Command="{Binding NewProjectCommand}" />
+                    <MenuItem Header="Open Project" Command="{Binding OpenProjectCommand}" />
+                    <MenuItem Header="Save" Command="{Binding SaveProjectCommand}" />
+                    <MenuItem Header="Save As" Command="{Binding SaveAsCommand}" />
+                    <Separator/>
+                    <MenuItem Header="Close Project" Command="{Binding CloseProjectCommand}" />
+                    <Separator/>
+                    <MenuItem Header="Exit to Home" Command="{Binding ExitCommand}" />
+                </MenuItem>
 
-                    <TextBlock Text="STEP:" Foreground="{StaticResource TextSecondaryBrush}"
-                               FontSize="10" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                    <TextBlock Text="{Binding BodyCountText}" Foreground="{StaticResource TextDataBrush}"
-                               FontSize="10" FontFamily="Consolas" FontWeight="SemiBold"
-                               VerticalAlignment="Center" Margin="0,0,16,0"/>
-                </StackPanel>
+                <MenuItem Header="Edit">
+                    <MenuItem Header="Undo" Command="{Binding UndoCommand}" />
+                    <MenuItem Header="Redo" Command="{Binding RedoCommand}" />
+                    <Separator/>
+                    <MenuItem Header="Reset Simulation" Command="{Binding ResetCommand}" />
+                    <MenuItem Header="Clear All Bodies" Command="{Binding ClearBodiesCommand}" />
+                </MenuItem>
 
-                <!-- Right: FPS + view toggles -->
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- View toggles -->
-                    <CheckBox Content="Grid" IsChecked="{Binding ShowGrid, Mode=TwoWay}"
-                              Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
-                              VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <CheckBox Content="Trails" IsChecked="{Binding ShowTrails, Mode=TwoWay}"
-                              Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
-                              VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <CheckBox Content="Stars" IsChecked="{Binding ShowStarfield, Mode=TwoWay}"
-                              Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
-                              VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <MenuItem Header="View">
+                    <MenuItem Header="Scene">
+                        <MenuItem Header="Grid" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowGrid}"
+                                  Command="{Binding ToggleGridCommand}" />
 
-                    <!-- Separator -->
-                    <Rectangle Width="1" Height="16" Fill="{StaticResource BorderBaseBrush}" Margin="0,0,12,0"/>
+                        <MenuItem Header="Axes" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowAxes}"
+                                  Command="{Binding ToggleAxesCommand}" />
 
-                    <!-- Time scale -->
-                    <TextBlock Text="{Binding TimeScale, StringFormat={}{0:F1}x}"
+                        <MenuItem Header="Orbits" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowOrbits}"
+                                  Command="{Binding ToggleOrbitsCommand}" />
+
+                        <MenuItem Header="Trails" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowTrails}"
+                                  Command="{Binding ToggleTrailsCommand}" />
+                    </MenuItem>
+
+                    <Separator/>
+
+                    <MenuItem Header="Rendering">
+                        <MenuItem Header="Bloom" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.EnableBloom}"
+                                  Command="{Binding ToggleBloomCommand}" />
+
+                        <MenuItem Header="Particles" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.EnableParticles}"
+                                  Command="{Binding ToggleParticlesCommand}" />
+
+                        <MenuItem Header="Gravitational Waves" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowGravitationalWaves}"
+                                  Command="{Binding ToggleWavesCommand}" />
+
+                        <MenuItem Header="Reflections" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.EnableReflections}"
+                                  Command="{Binding ToggleReflectionsCommand}" />
+                    </MenuItem>
+
+                    <Separator/>
+
+                    <MenuItem Header="Debug">
+                        <MenuItem Header="Velocity Vectors" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowVelocityVectors}"
+                                  Command="{Binding ToggleVelocityVectorsCommand}" />
+
+                        <MenuItem Header="Force Vectors" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowForceVectors}"
+                                  Command="{Binding ToggleForceVectorsCommand}" />
+
+                        <MenuItem Header="Bounding Boxes" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowBoundingBoxes}"
+                                  Command="{Binding ToggleBoundingBoxesCommand}" />
+                    </MenuItem>
+
+                    <Separator/>
+
+                    <MenuItem Header="Panels">
+                        <MenuItem Header="Inspector" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowInspector}"
+                                  Command="{Binding ToggleInspectorCommand}" />
+
+                        <MenuItem Header="Statistics" IsCheckable="True"
+                                  IsChecked="{Binding RenderSettings.ShowStatistics}"
+                                  Command="{Binding ToggleStatsCommand}" />
+                    </MenuItem>
+
+                </MenuItem>
+
+                <MenuItem Header="Run">
+                    <MenuItem Header="Start" Command="{Binding StartSimulationCommand}" />
+                    <MenuItem Header="Pause" Command="{Binding PauseSimulationCommand}" />
+                    <MenuItem Header="Step Forward" Command="{Binding StepCommand}" />
+                    <Separator/>
+                    <MenuItem Header="Increase Speed" Command="{Binding SpeedUpCommand}" />
+                    <MenuItem Header="Decrease Speed" Command="{Binding SlowDownCommand}" />
+                </MenuItem>
+
+                <MenuItem Header="Tools">
+                    <MenuItem Header="Create Planet" Command="{Binding CreatePlanetCommand}" />
+                    <MenuItem Header="Create Star" Command="{Binding CreateStarCommand}" />
+                    <MenuItem Header="Create Black Hole" Command="{Binding CreateBlackHoleCommand}" />
+                    <Separator/>
+                    <MenuItem Header="Trigger Supernova" Command="{Binding TriggerSupernovaCommand}" />
+                    <MenuItem Header="Trigger Big Bang" Command="{Binding TriggerBigBangCommand}" />
+                </MenuItem>
+
+                <MenuItem Header="Help">
+                    <MenuItem Header="About" Command="{Binding ShowAboutCommand}" />
+                    <MenuItem Header="Controls Guide" Command="{Binding ShowControlsCommand}" />
+                    <MenuItem Header="Diagnostics" Command="{Binding ShowDiagnosticsCommand}" />
+                </MenuItem>
+            </Menu>
+
+            <Border Grid.Row="1" Background="{StaticResource MenuBarBackground}"
+                    BorderBrush="{StaticResource BorderBaseBrush}" BorderThickness="0,0,0,1">
+                <DockPanel Height="32" Margin="10,0">
+                    <TextBlock DockPanel.Dock="Left"
+                               Text="☉ CELESTIAL MECHANICS"
                                Foreground="{StaticResource AccentCyanBrush}"
-                               FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
-                               VerticalAlignment="Center" Margin="0,0,12,0" MinWidth="30"/>
+                               FontSize="12" FontWeight="Bold" FontFamily="Consolas"
+                               VerticalAlignment="Center" Margin="0,0,20,0"/>
 
-                    <!-- FPS -->
-                    <TextBlock Text="{Binding FpsText}"
-                               Foreground="{StaticResource StatusGreenBrush}"
-                               FontFamily="Consolas" FontSize="11" FontWeight="Bold"
-                               VerticalAlignment="Center"/>
-                </StackPanel>
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="SIM TIME:" Foreground="{StaticResource TextSecondaryBrush}"
+                                   FontSize="10" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBlock Text="{Binding SimTimeText}" Foreground="{StaticResource TextDataBrush}"
+                                   FontSize="10" FontFamily="Consolas" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,16,0" MinWidth="80"/>
 
-                <!-- Center spacer -->
-                <Border/>
-            </DockPanel>
-        </Border>
+                        <TextBlock Text="STEP:" Foreground="{StaticResource TextSecondaryBrush}"
+                                   FontSize="10" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBlock Text="{Binding BodyCountText}" Foreground="{StaticResource TextDataBrush}"
+                                   FontSize="10" FontFamily="Consolas" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,16,0"/>
+                    </StackPanel>
 
-        <!-- Minimal menu bar (IDE mode) -->
-        <Menu Grid.Row="0" Style="{StaticResource MenuBarStyle}"
-              Visibility="{Binding IsIdeActive, Converter={StaticResource BoolToVis}}"
-              VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,0,0,0"
-              Panel.ZIndex="10" Opacity="0">
-            <!-- Hidden but keyboard shortcuts still work via InputBindings -->
-        </Menu>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <CheckBox Content="Grid" IsChecked="{Binding ShowGrid, Mode=TwoWay}"
+                                  Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
+                                  VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <CheckBox Content="Trails" IsChecked="{Binding ShowTrails, Mode=TwoWay}"
+                                  Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
+                                  VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <CheckBox Content="Stars" IsChecked="{Binding ShowStarfield, Mode=TwoWay}"
+                                  Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
+                                  VerticalAlignment="Center" Margin="0,0,12,0"/>
+
+                        <Rectangle Width="1" Height="16" Fill="{StaticResource BorderBaseBrush}" Margin="0,0,12,0"/>
+
+                        <TextBlock Text="{Binding TimeScale, StringFormat={}{0:F1}x}"
+                                   Foreground="{StaticResource AccentCyanBrush}"
+                                   FontFamily="Consolas" FontSize="11" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,12,0" MinWidth="30"/>
+
+                        <TextBlock Text="{Binding FpsText}"
+                                   Foreground="{StaticResource StatusGreenBrush}"
+                                   FontFamily="Consolas" FontSize="11" FontWeight="Bold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Border/>
+                </DockPanel>
+            </Border>
+        </Grid>
 
         <!-- ═══════════════════════════════════════════════════════════
              ROW 1 – MAIN WORKSPACE

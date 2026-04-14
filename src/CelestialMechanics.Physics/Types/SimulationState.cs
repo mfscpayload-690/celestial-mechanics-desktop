@@ -19,4 +19,7 @@ public class SimulationState
     public int CollisionCount { get; init; }
     public IReadOnlyList<CollisionBurstEvent> CollisionBursts { get; init; } = Array.Empty<CollisionBurstEvent>();
     public double CurrentDt { get; init; }
+    public double StepEnergyDelta { get; init; }
+    public double StepMomentumDelta { get; init; }
+    public double StepAngularMomentumDelta { get; init; }
 }

@@ -33,6 +33,7 @@ public enum BlackHoleDebugView
 public class GLRenderer : IDisposable
 {
     private const int AccretionRendererCapacity = 24000;
+    private const int MaxEffectBodiesCapacity = 12000;
     private const int PredictionHardMaxSteps = 1024;
     private const int PredictionMemoryBudgetPoints = 1024;
     private const int SimulationModeMaxPredictionSteps = 192;
@@ -46,6 +47,26 @@ public class GLRenderer : IDisposable
         public float MaxRadius;
         public float Intensity;
         public float Phase;
+    }
+
+    private struct LightSource
+    {
+        public Vector3 Position;
+        public Vector3 Color;
+        public float Intensity;
+    }
+
+    private struct ExplosionEvent
+    {
+        public Vector3 Position;
+        public Vector4 Color;
+        public float Radius;
+        public float MaxRadius;
+        public float ExpansionSpeed;
+        public float Age;
+        public float Lifetime;
+        public float Brightness;
+        public EmissionTier Tier;
     }
 
     private GL? _gl;
@@ -87,36 +108,59 @@ public class GLRenderer : IDisposable
     private readonly List<int> _staleOrbitPathIds = new();
     private readonly List<Vector3> _predictedTrajectory = new();
     private readonly ISelectionContext? _selectionContext;
+    private readonly RenderSettings _settings;
     private readonly List<CollisionFlash> _collisionFlashes = new(64);
     private double _lastCollisionEventTime = double.NegativeInfinity;
     private float _bhParticleHeat;
     private float _bhParticleDensity;
     private int _qualityBudgetStrikeCount;
     private int _qualityRecoveryCount;
-    private const int MaxStarLights = 8;
+    private const int MaxStarLightsCapacity = 8;
     private const int MaxRayOccluders = 24;
-    private readonly Vector4[] _starLightData = new Vector4[MaxStarLights];
-    private readonly Vector3[] _starLightColorData = new Vector3[MaxStarLights];
+    private readonly Vector4[] _starLightData = new Vector4[MaxStarLightsCapacity];
+    private readonly Vector3[] _starLightColorData = new Vector3[MaxStarLightsCapacity];
     private readonly Vector4[] _rayOccluderData = new Vector4[MaxRayOccluders];
+    private readonly LightSource[] _activeEmitters = new LightSource[MaxStarLightsCapacity];
     private int _starLightCount;
     private int _rayOccluderCount;
     private Vector3 _currentFrameOrigin;
+    private readonly List<ExplosionEvent> _explosions = new(32);
+    private uint _reflectionFbo;
+    private uint _reflectionColorTex;
+    private uint _reflectionDepthTex;
+    private int _reflectionBufferWidth;
+    private int _reflectionBufferHeight;
+
+    public GLRenderer(RenderSettings settings, ISelectionContext? selectionContext = null)
+    {
+        _settings = settings ?? new RenderSettings();
+        _selectionContext = selectionContext;
+    }
 
     public GLRenderer(ISelectionContext? selectionContext = null)
+        : this(new RenderSettings(), selectionContext)
     {
-        _selectionContext = selectionContext;
     }
 
     public Camera Camera => _camera;
     public RenderState RenderState => _renderState;
+    public RenderSettings Settings => _settings;
     public ReferenceFrameManager ReferenceFrame { get; } = new();
     public bool ShowGrid { get; set; } = true;
     public bool ShowVelocityArrows { get; set; } = false;
     public bool ShowBackground { get; set; } = true;
-    public bool ShowOrbitalTrails { get; set; } = true;
+    public bool ShowOrbitalTrails
+    {
+        get => _settings.EnableTrails;
+        set => _settings.EnableTrails = value;
+    }
     public bool ShowPersistentOrbitPaths { get; set; } = true;
     public bool ShowPredictedTrajectory { get; set; } = true;
-    public bool ShowAccretionDisks { get; set; } = true;
+    public bool ShowAccretionDisks
+    {
+        get => _settings.EnableParticles;
+        set => _settings.EnableParticles = value;
+    }
     public bool UseAnalysisPrediction { get; set; }
     public bool HighPrecisionPrediction { get; set; }
     public int MaxTrailPoints { get; set; } = 24;
@@ -271,10 +315,13 @@ public class GLRenderer : IDisposable
 
         _renderState.UpdateFrom(engine, ReferenceFrame, SelectedBodyId);
 
-        AppendCollisionBursts(engine.CurrentState);
+        AppendCollisionBursts(engine);
 
         if (_renderState.BodyCount == 0 && engine.CurrentState.CollisionBursts.Count == 0)
+        {
             _collisionFlashes.Clear();
+            _explosions.Clear();
+        }
 
         BuildCollisionEffectBodies();
 
@@ -298,9 +345,13 @@ public class GLRenderer : IDisposable
 
         if (_accretionDiskRenderer != null)
         {
-            ReadOnlySpan<DiskParticle> particles = ShowAccretionDisks
+            ReadOnlySpan<DiskParticle> particles = _settings.EnableParticles && ShowAccretionDisks
                 ? engine.GetAccretionParticles()
                 : ReadOnlySpan<DiskParticle>.Empty;
+
+            int cappedParticles = System.Math.Clamp(_settings.MaxParticles, 250, AccretionRendererCapacity);
+            if (particles.Length > cappedParticles)
+                particles = particles.Slice(0, cappedParticles);
 
             _accretionDiskRenderer.UpdateParticles(particles);
             _bhParticleHeat = _accretionDiskRenderer.AverageTemperatureNormalized;
@@ -309,13 +360,13 @@ public class GLRenderer : IDisposable
 
         _lineRenderer.Clear();
 
-        if (engine.Bodies != null && ShowPersistentOrbitPaths)
+        if (engine.Bodies != null && ShowPersistentOrbitPaths && _settings.EnableTrails)
         {
             UpdateOrbitPaths(engine.Bodies);
             AppendOrbitPathLines(engine.Bodies);
         }
 
-        if (ShowOrbitalTrails && engine.Bodies != null)
+        if (ShowOrbitalTrails && engine.Bodies != null && _settings.EnableTrails)
         {
             UpdateTrails(engine.Bodies);
             AppendTrailLines(engine.Bodies);
@@ -420,10 +471,12 @@ public class GLRenderer : IDisposable
 
     private void BuildCollisionEffectBodies()
     {
-        const int layersPerFlash = 2;
-        int needed = _collisionFlashes.Count * layersPerFlash;
+        int estimatedFromFlashes = _collisionFlashes.Count * 2;
+        int estimatedFromExplosions = _explosions.Count * 3;
+        int estimatedParticles = System.Math.Min(_settings.MaxExplosionParticles, _explosions.Count * 180);
+        int needed = System.Math.Min(MaxEffectBodiesCapacity, estimatedFromFlashes + estimatedFromExplosions + estimatedParticles + 16);
         if (_effectBodies.Length < needed)
-            _effectBodies = new RenderBody[System.Math.Max(needed, 16)];
+            _effectBodies = new RenderBody[System.Math.Max(needed, 32)];
 
         _effectBodyCount = 0;
 
@@ -450,12 +503,81 @@ public class GLRenderer : IDisposable
                 new Vector4(0.62f, 0.76f, 1.0f, 0.19f * fx.Intensity * fade),
                 new Vector4(7.0f, 0.95f * fx.Intensity, 1.05f * fx.Intensity, 0.85f));
         }
+
+        if (!_settings.EnableExplosions)
+            return;
+
+        int maxExplosionParticles = System.Math.Clamp(_settings.MaxExplosionParticles, 64, MaxEffectBodiesCapacity);
+        int particleBudgetPerExplosion = _explosions.Count == 0
+            ? 0
+            : System.Math.Max(24, maxExplosionParticles / _explosions.Count);
+
+        for (int i = 0; i < _explosions.Count; i++)
+        {
+            var explosion = _explosions[i];
+            float lifeT = explosion.Age / System.Math.Max(explosion.Lifetime, 1e-5f);
+            float fade = System.Math.Clamp(1.0f - lifeT, 0.0f, 1.0f);
+            var framePosition = explosion.Position - _currentFrameOrigin;
+
+            float coreRadius = System.MathF.Max(explosion.Radius * 0.18f, 0.04f);
+            float shockRadius = System.MathF.Max(explosion.Radius, 0.08f);
+            float shellRadius = System.MathF.Max(explosion.Radius * 1.25f, 0.1f);
+
+            float tierBoost = System.Math.Clamp(RenderSettings.GetTierMultiplier(explosion.Tier) / 200.0f, 1.0f, 12.0f);
+            AddEffectBody(
+                framePosition,
+                coreRadius,
+                new Vector4(1.0f, 0.98f, 0.96f, 0.35f * fade),
+                new Vector4(7.0f, explosion.Brightness * tierBoost, 1.8f * tierBoost, 0.25f));
+
+            AddEffectBody(
+                framePosition,
+                shockRadius,
+                new Vector4(explosion.Color.X, explosion.Color.Y, explosion.Color.Z, 0.22f * fade),
+                new Vector4(7.0f, explosion.Brightness * 0.75f * tierBoost, 1.3f * tierBoost, 0.7f));
+
+            AddEffectBody(
+                framePosition,
+                shellRadius,
+                new Vector4(1.0f, 0.75f, 0.42f, 0.14f * fade),
+                new Vector4(7.0f, explosion.Brightness * 0.45f * tierBoost, 1.1f, 0.95f));
+
+            float cameraDistance = Vector3.Distance(_camera.Position, framePosition);
+            float lod = cameraDistance > 40.0f ? 0.25f : (cameraDistance > 16.0f ? 0.5f : 1.0f);
+            int ejectaCount = System.Math.Clamp((int)(particleBudgetPerExplosion * lod), 12, particleBudgetPerExplosion);
+
+            for (int p = 0; p < ejectaCount; p++)
+            {
+                if (_effectBodyCount >= _effectBodies.Length)
+                    break;
+
+                float phase = (p + 1) * 0.6180339f;
+                float theta = 6.2831853f * (phase - System.MathF.Floor(phase));
+                float phi = System.MathF.Acos(System.Math.Clamp(1.0f - 2.0f * (p + 0.5f) / (ejectaCount + 0.5f), -1.0f, 1.0f));
+                Vector3 dir = new(
+                    System.MathF.Sin(phi) * System.MathF.Cos(theta),
+                    System.MathF.Cos(phi),
+                    System.MathF.Sin(phi) * System.MathF.Sin(theta));
+
+                float particleRadius = 0.0035f + 0.008f * (1.0f - lifeT);
+                float ringOffset = shockRadius * (0.58f + 0.45f * ((p % 19) / 19.0f));
+                var pos = framePosition + dir * ringOffset;
+                var col = Vector4.Lerp(new Vector4(1.0f, 0.96f, 0.88f, 0.22f), new Vector4(0.95f, 0.42f, 0.16f, 0.08f), lifeT);
+
+                AddEffectBody(
+                    pos,
+                    particleRadius,
+                    col,
+                    new Vector4(7.0f, explosion.Brightness * 0.15f, 0.95f, 0.7f));
+            }
+        }
     }
 
     private void BuildStarLightsAndOccluders()
     {
         _starLightCount = 0;
         _rayOccluderCount = 0;
+        int maxConfiguredLights = System.Math.Clamp(_settings.MaxStarLights, 1, MaxStarLightsCapacity);
 
         for (int i = 0; i < _renderState.BodyCount; i++)
         {
@@ -471,27 +593,56 @@ public class GLRenderer : IDisposable
             }
 
             bool emitsLight = body.BodyType == (int)BodyType.Star || body.BodyType == (int)BodyType.NeutronStar;
-            if (!emitsLight || _starLightCount >= MaxStarLights)
+            if (!emitsLight || _starLightCount >= maxConfiguredLights)
                 continue;
 
-            float radius = System.MathF.Max(body.Radius, 0.01f);
-            float luminosity = System.MathF.Max(body.VisualParams.Y, 0.05f);
-            float intensity = System.MathF.Max(
-                0.05f,
-                StarLightIntensityScale * luminosity * (0.55f + 0.45f * System.MathF.Sqrt(radius)));
+            float baseLuminosity = System.MathF.Max(body.VisualParams.Y, 0.05f) * StarLightIntensityScale;
+            float massFactor = System.MathF.Sqrt(System.MathF.Max(body.Mass, 0.01f));
+            float temperatureFactor = body.StarTemperatureK > 0.0f
+                ? System.Math.Clamp((body.StarTemperatureK - 2400.0f) / 11000.0f, 0.35f, 4.0f)
+                : 1.0f;
+
+            float intensity = System.MathF.Max(0.1f, baseLuminosity * massFactor * temperatureFactor);
+            Vector3 color = body.StarTemperatureK > 0.0f
+                ? BlackbodyColorApprox(body.StarTemperatureK)
+                : Vector3.Clamp(new Vector3(body.Color.X, body.Color.Y, body.Color.Z), Vector3.Zero, Vector3.One);
+
+            _activeEmitters[_starLightCount] = new LightSource
+            {
+                Position = body.Position,
+                Color = color,
+                Intensity = intensity,
+            };
 
             _starLightData[_starLightCount] = new Vector4(body.Position.X, body.Position.Y, body.Position.Z, intensity);
-            _starLightColorData[_starLightCount] = Vector3.Clamp(new Vector3(body.Color.X, body.Color.Y, body.Color.Z), Vector3.Zero, Vector3.One);
+            _starLightColorData[_starLightCount] = color;
             _starLightCount++;
         }
 
-        if (_starLightCount == 0)
+        if (_settings.EnableExplosions)
         {
-            Vector3 fallbackDir = Vector3.Normalize(new Vector3(1.8f, 2.4f, 1.1f));
-            Vector3 fallbackPos = _camera.Position + fallbackDir * 22.0f;
-            _starLightData[0] = new Vector4(fallbackPos, 0.55f * StarLightIntensityScale);
-            _starLightColorData[0] = new Vector3(1.0f, 0.96f, 0.9f);
-            _starLightCount = 1;
+            for (int i = 0; i < _explosions.Count && _starLightCount < maxConfiguredLights; i++)
+            {
+                var explosion = _explosions[i];
+                float ageFactor = 1.0f - System.Math.Clamp(explosion.Age / System.Math.Max(explosion.Lifetime, 1e-5f), 0.0f, 1.0f);
+                float tierScale = RenderSettings.GetTierMultiplier(explosion.Tier) / 50.0f;
+                float intensity = System.MathF.Max(0.12f, explosion.Brightness * tierScale * ageFactor);
+
+                _activeEmitters[_starLightCount] = new LightSource
+                {
+                    Position = explosion.Position - _currentFrameOrigin,
+                    Color = new Vector3(explosion.Color.X, explosion.Color.Y, explosion.Color.Z),
+                    Intensity = intensity,
+                };
+
+                _starLightData[_starLightCount] = new Vector4(
+                    explosion.Position.X - _currentFrameOrigin.X,
+                    explosion.Position.Y - _currentFrameOrigin.Y,
+                    explosion.Position.Z - _currentFrameOrigin.Z,
+                    intensity);
+                _starLightColorData[_starLightCount] = new Vector3(explosion.Color.X, explosion.Color.Y, explosion.Color.Z);
+                _starLightCount++;
+            }
         }
     }
 
@@ -511,8 +662,9 @@ public class GLRenderer : IDisposable
         };
     }
 
-    private void AppendCollisionBursts(SimulationState state)
+    private void AppendCollisionBursts(SimulationEngine engine)
     {
+        SimulationState state = engine.CurrentState;
         if (state.Time <= _lastCollisionEventTime || state.CollisionBursts.Count == 0)
         {
             _lastCollisionEventTime = System.Math.Max(_lastCollisionEventTime, state.Time);
@@ -543,9 +695,127 @@ public class GLRenderer : IDisposable
                 Intensity = intensity,
                 Phase = Hash01(new Vector3((float)burst.Position.X, (float)burst.Position.Y, (float)burst.Position.Z)) * (MathF.PI * 2.0f)
             });
+
+            if (_settings.EnableExplosions)
+            {
+                EmissionTier tier = DetermineEmissionTier(burst);
+                AddExplosionEvent(
+                    position: new Vector3((float)burst.Position.X, (float)burst.Position.Y, (float)burst.Position.Z),
+                    tier: tier,
+                    combinedMass: (float)System.Math.Max(burst.CombinedMass, 1e-5),
+                    releasedEnergy: (float)System.Math.Max(burst.ReleasedEnergy, 1e-5),
+                    bindingEnergy: (float)System.Math.Max(burst.BindingEnergy, 0.0),
+                    expansionVelocityMps: (float)System.Math.Max(burst.ExpansionVelocity, 0.0),
+                    luminosityW: (float)System.Math.Max(burst.Luminosity, 0.0),
+                    eventHorizonAbsorption: burst.EventHorizonAbsorption);
+            }
         }
 
         _lastCollisionEventTime = state.Time;
+    }
+
+    private void AddExplosionEvent(
+        Vector3 position,
+        EmissionTier tier,
+        float combinedMass,
+        float releasedEnergy,
+        float bindingEnergy,
+        float expansionVelocityMps,
+        float luminosityW,
+        bool eventHorizonAbsorption)
+    {
+        if (eventHorizonAbsorption)
+            return;
+
+        float tierMultiplier = RenderSettings.GetTierMultiplier(tier);
+        float massScale = System.Math.Clamp(System.MathF.Cbrt(System.MathF.Max(combinedMass, 1e-4f)), 0.6f, 8.0f);
+        float energyRatio = bindingEnergy > 0.0f
+            ? releasedEnergy / bindingEnergy
+            : System.MathF.Log10(1.0f + releasedEnergy);
+        float energyScale = System.Math.Clamp(System.MathF.Log10(1.0f + System.MathF.Max(energyRatio, 0.0f) * 10.0f), 0.05f, 4.0f);
+
+        float expansionSpeed = expansionVelocityMps > 0.0f
+            ? System.Math.Clamp(expansionVelocityMps / 15000.0f, 0.3f, 32.0f)
+            : System.Math.Clamp(1.2f + 4.2f * energyScale, 0.3f, 32.0f);
+
+        float maxRadius = System.Math.Clamp(
+            0.18f + 0.2f * massScale + expansionSpeed * 0.55f,
+            0.15f,
+            _settings.MaxExplosionRadius);
+
+        float luminosityScale = luminosityW > 0.0f
+            ? System.Math.Clamp((float)CelestialMechanics.Physics.Astrophysics.Units.RenderScale(luminosityW / 1.0e20f), 0.2f, 12.0f)
+            : System.Math.Clamp(energyScale * 2.0f, 0.2f, 12.0f);
+
+        float brightness = System.Math.Clamp((tierMultiplier / 200.0f) * (0.3f + 0.4f * luminosityScale + 0.2f * energyScale), 0.25f, 24.0f);
+        float lifetime = System.Math.Clamp(maxRadius / System.Math.Max(expansionSpeed, 0.01f), 0.8f, 18.0f);
+
+        Vector4 color = tier switch
+        {
+            EmissionTier.Supernova => new Vector4(0.92f, 0.66f, 0.38f, 1.0f),
+            EmissionTier.Kilonova => new Vector4(0.70f, 0.83f, 1.0f, 1.0f),
+            EmissionTier.BigBang => new Vector4(1.0f, 0.97f, 0.92f, 1.0f),
+            _ => new Vector4(1.0f, 0.86f, 0.58f, 1.0f),
+        };
+
+        _explosions.Add(new ExplosionEvent
+        {
+            Position = position,
+            Color = color,
+            Radius = 0.06f,
+            MaxRadius = maxRadius,
+            ExpansionSpeed = expansionSpeed,
+            Age = 0.0f,
+            Lifetime = lifetime,
+            Brightness = brightness,
+            Tier = tier,
+        });
+
+        while (_explosions.Count > 24)
+            _explosions.RemoveAt(0);
+    }
+
+    private static EmissionTier DetermineEmissionTier(in CollisionBurstEvent burst)
+    {
+        double ratio = burst.BindingEnergy > 0.0
+            ? burst.ReleasedEnergy / burst.BindingEnergy
+            : burst.ReleasedEnergy;
+
+        if (ratio > 5.0 || burst.CombinedMass > 20.0)
+            return EmissionTier.BigBang;
+
+        if (ratio > 2.0 || burst.CombinedMass > 7.0)
+            return EmissionTier.Kilonova;
+
+        if (ratio > 0.8 || burst.CombinedMass > 2.4)
+            return EmissionTier.Supernova;
+
+        return EmissionTier.Star;
+    }
+
+    private static Vector3 BlackbodyColorApprox(float temperatureK)
+    {
+        float t = System.Math.Clamp(temperatureK, 1000.0f, 50000.0f);
+        if (t < 3500.0f)
+        {
+            float f = (t - 1000.0f) / 2500.0f;
+            return Vector3.Lerp(new Vector3(1.0f, 0.10f, 0.0f), new Vector3(1.0f, 0.55f, 0.10f), f);
+        }
+
+        if (t < 6500.0f)
+        {
+            float f = (t - 3500.0f) / 3000.0f;
+            return Vector3.Lerp(new Vector3(1.0f, 0.55f, 0.10f), new Vector3(1.0f, 0.95f, 0.90f), f);
+        }
+
+        if (t < 15000.0f)
+        {
+            float f = (t - 6500.0f) / 8500.0f;
+            return Vector3.Lerp(new Vector3(1.0f, 0.95f, 0.90f), new Vector3(0.7f, 0.8f, 1.0f), f);
+        }
+
+        float highF = System.Math.Clamp((t - 15000.0f) / 35000.0f, 0.0f, 1.0f);
+        return Vector3.Lerp(new Vector3(0.7f, 0.8f, 1.0f), new Vector3(0.4f, 0.5f, 1.0f), highF);
     }
 
     private static float Hash01(Vector3 p)
@@ -571,15 +841,68 @@ public class GLRenderer : IDisposable
         }
     }
 
+    private void UpdateExplosions(float dt)
+    {
+        if (dt <= 0.0f)
+            return;
+
+        if (_settings.EnableBigBangMode && _explosions.Count == 0)
+        {
+            AddExplosionEvent(
+                Vector3.Zero,
+                EmissionTier.BigBang,
+                combinedMass: 30.0f,
+                releasedEnergy: 2.0e7f,
+                bindingEnergy: 1.0e6f,
+                expansionVelocityMps: 2.0e7f,
+                luminosityW: 5.0e30f,
+                eventHorizonAbsorption: false);
+            _settings.EnableBigBangMode = false;
+        }
+
+        for (int i = _explosions.Count - 1; i >= 0; i--)
+        {
+            var explosion = _explosions[i];
+            explosion.Age += dt;
+            explosion.Radius = System.Math.Clamp(
+                explosion.Radius + explosion.ExpansionSpeed * dt,
+                0.04f,
+                System.Math.Min(_settings.MaxExplosionRadius, explosion.MaxRadius));
+
+            if (explosion.Age >= explosion.Lifetime || explosion.Radius >= _settings.MaxExplosionRadius)
+            {
+                _explosions.RemoveAt(i);
+                continue;
+            }
+
+            _explosions[i] = explosion;
+        }
+    }
+
     public void Render(float deltaTime, int width, int height)
     {
         if (_gl == null) return;
+
+        ApplyAdaptivePerformanceControl(deltaTime);
+
+        bool renderOnlyParticles = _settings.DebugOnlyParticles;
+        bool renderOnlyWaves = _settings.DebugOnlyWaves;
+        bool renderSceneBodies = !renderOnlyParticles;
+        bool renderParticles = _settings.EnableParticles && !renderOnlyWaves;
+
+        float exposure = System.Math.Clamp(_settings.Exposure, 0.1f, 4.0f);
+        float bloomEnabled = _settings.EnableBloom ? 1.0f : 0.0f;
+        float bloomIntensity = System.Math.Clamp(_settings.BloomIntensity, 0.0f, 4.0f);
+        float bloomRadiusScale = System.Math.Clamp(_settings.BloomRadius / 5.0f, 0.2f, 2.5f);
+        float starEmission = System.Math.Clamp(_settings.StarEmissionMultiplier, 0.0f, 4.0f);
+        float particleEmission = System.Math.Clamp(_settings.ParticleEmissionMultiplier * _settings.ParticleEmissionScale, 0.0f, 4.0f);
 
         if (AutoBlackHoleQuality)
             UpdateBlackHoleQualityTier(deltaTime);
 
         _timeSeconds += deltaTime;
         UpdateCollisionFlashes(System.Math.Max(deltaTime, 1e-5f));
+        UpdateExplosions(System.Math.Max(deltaTime, 1e-5f));
         _camera.Update(deltaTime);
 
         float aspect = width / (float)System.Math.Max(height, 1);
@@ -587,24 +910,25 @@ public class GLRenderer : IDisposable
         var projection = _camera.GetProjectionMatrix(aspect);
         var viewPos = _camera.Position;
 
-        if (ShowBackground)
+        EnsureReflectionBuffers(width, height);
+
+        if (_settings.EnableReflections && ShowBackground && _reflectionFbo != 0)
         {
-            _gl.Disable(EnableCap.CullFace);
-            _gl.Disable(EnableCap.DepthTest);
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _reflectionFbo);
+            _gl.Viewport(0, 0, (uint)_reflectionBufferWidth, (uint)_reflectionBufferHeight);
+            _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            RenderBackgroundPass(_reflectionBufferWidth, _reflectionBufferHeight, viewPos, exposure, starEmission);
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            _gl.Viewport(0, 0, (uint)width, (uint)height);
+        }
 
-            _backgroundShader!.Use();
-            _backgroundShader.SetUniform("uTime", _timeSeconds);
-            _backgroundShader.SetUniform("uResolution", new Vector2(width, height));
-            _backgroundShader.SetUniform("uCameraPos", viewPos);
-            _backgroundRenderer.Render(_gl);
-
-            _gl.Enable(EnableCap.DepthTest);
-            _gl.Enable(EnableCap.CullFace);
-            _gl.CullFace(TriangleFace.Back);
+        if (ShowBackground && !renderOnlyParticles)
+        {
+            RenderBackgroundPass(width, height, viewPos, exposure, starEmission);
         }
 
         // Render grid
-        if (ShowGrid)
+        if (ShowGrid && renderSceneBodies)
         {
             _gl.Enable(EnableCap.Blend);
             _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -621,73 +945,98 @@ public class GLRenderer : IDisposable
         }
 
         // Render bodies
-        _gl.Enable(EnableCap.Blend);
-        _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-        _sphereShader!.Use();
-        if (_albedoAtlas != null)
+        if (renderSceneBodies)
         {
-            _gl.ActiveTexture(TextureUnit.Texture1);
-            _gl.BindTexture(TextureTarget.Texture2DArray, _albedoAtlas.Handle);
+            _gl.Enable(EnableCap.Blend);
+            _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+            _sphereShader!.Use();
+            if (_albedoAtlas != null)
+            {
+                _gl.ActiveTexture(TextureUnit.Texture1);
+                _gl.BindTexture(TextureTarget.Texture2DArray, _albedoAtlas.Handle);
+            }
+            _sphereShader.SetUniform("uView", view);
+            _sphereShader.SetUniform("uProjection", projection);
+            _sphereShader.SetUniform("uViewPos", viewPos);
+            _sphereShader.SetUniform("uTime", _timeSeconds);
+            _sphereShader.SetUniform("uGlobalLuminosity", GlobalLuminosityScale * starEmission * exposure);
+            _sphereShader.SetUniform("uGlobalGlow", GlobalGlowScale * starEmission * bloomEnabled * bloomIntensity);
+            _sphereShader.SetUniform("uGlobalSaturation", GlobalSaturation);
+            _sphereShader.SetUniform("uUseAlbedoAtlas", EnableAlbedoTextureMaps && _albedoAtlas != null ? 1 : 0);
+            _sphereShader.SetUniform("uBodyAlbedoAtlas", 1);
+            if (_reflectionColorTex != 0)
+            {
+                _gl.ActiveTexture(TextureUnit.Texture2);
+                _gl.BindTexture(TextureTarget.Texture2D, _reflectionColorTex);
+                _sphereShader.SetUniform("uScreenTexture", 2);
+            }
+
+            if (_reflectionDepthTex != 0)
+            {
+                _gl.ActiveTexture(TextureUnit.Texture3);
+                _gl.BindTexture(TextureTarget.Texture2D, _reflectionDepthTex);
+                _sphereShader.SetUniform("uDepthTexture", 3);
+            }
+
+            _sphereShader.SetUniform("uAlbedoBlend", System.Math.Clamp(AlbedoTextureBlend, 0.0f, 1.0f));
+            _sphereShader.SetUniform("uEnableStarLighting", EnableStarDrivenLighting && _starLightCount > 0 ? 1 : 0);
+            _sphereShader.SetUniform("uStarLightCount", _starLightCount);
+            _sphereShader.SetUniform("uStarLightFalloff", System.Math.Clamp(StarLightFalloff, 0.05f, 4.0f));
+            _sphereShader.SetUniform("uAmbientFloor", 0.0f);
+            _sphereShader.SetUniform("uEnableHdr", _settings.EnableHdr ? 1 : 0);
+            _sphereShader.SetUniform("uExposure", exposure);
+            _sphereShader.SetUniform("uEnableReflections", _settings.EnableReflections ? 1 : 0);
+            _sphereShader.SetUniform("uReflectionScale", System.Math.Clamp(_settings.ReflectionScale, 0.001f, 0.04f));
+            _sphereShader.SetUniform("uMaxReflectionSamples", System.Math.Clamp(_settings.MaxReflectionSamples, 1, 16));
+            _sphereShader.SetUniform("uResolution", new Vector2(width, height));
+            _sphereShader.SetUniform("uEnableGlowScaling", _settings.EnableGlowScaling ? 1 : 0);
+            _sphereShader.SetUniform("uGlowDistanceScale", System.Math.Clamp(_settings.GlowDistanceScale, 2.0f, 200.0f));
+            _sphereShader.SetUniform("uRayTraceShadows", EnableRayTracedShadows ? 1 : 0);
+            _sphereShader.SetUniform("uRayOccluderCount", _rayOccluderCount);
+            _sphereShader.SetUniform("uRayShadowStrength", System.Math.Clamp(RayShadowStrength, 0.0f, 1.0f));
+            _sphereShader.SetUniform("uRayShadowSoftness", System.Math.Clamp(RayShadowSoftness, 0.0005f, 0.20f));
+            _sphereShader.SetUniform("uBhQualityTier", (int)BlackHoleQualityTier);
+            _sphereShader.SetUniform("uBhPreset", (int)BlackHolePreset);
+            _sphereShader.SetUniform("uBhRingThickness", System.Math.Clamp(BlackHoleRingThickness, 0.08f, 1.0f));
+            _sphereShader.SetUniform("uBhLensStrength", System.Math.Clamp(BlackHoleLensingStrength, 0.0f, 2.5f));
+            _sphereShader.SetUniform("uBhDopplerBoost", System.Math.Clamp(BlackHoleDopplerBoost, 0.0f, 3.0f));
+            _sphereShader.SetUniform("uBhOpticalDepth", System.Math.Clamp(BlackHoleOpticalDepth, 0.0f, 4.0f));
+            _sphereShader.SetUniform("uBhTemperatureScale", System.Math.Clamp(BlackHoleTemperatureScale, 0.25f, 3.0f));
+            _sphereShader.SetUniform("uBhBloomScale", System.Math.Clamp(BlackHoleBloomScale * bloomEnabled * bloomIntensity * bloomRadiusScale * particleEmission, 0.0f, 4.0f));
+            _sphereShader.SetUniform("uBhDebugMode", (int)BlackHoleDebugMode);
+            _sphereShader.SetUniform("uBhParticleHeat", System.Math.Clamp(_bhParticleHeat, 0.0f, 1.0f));
+            _sphereShader.SetUniform("uBhParticleDensity", System.Math.Clamp(_bhParticleDensity, 0.0f, 1.0f));
+
+            for (int i = 0; i < _starLightCount; i++)
+            {
+                Vector4 light = _starLightData[i];
+                _sphereShader.SetUniform($"uStarLights[{i}]", new Vector3(light.X, light.Y, light.Z));
+                _sphereShader.SetUniform($"uStarLightIntensity[{i}]", light.W);
+                _sphereShader.SetUniform($"uStarLightColor[{i}]", _starLightColorData[i]);
+            }
+
+            for (int i = 0; i < _rayOccluderCount; i++)
+            {
+                Vector4 occ = _rayOccluderData[i];
+                _sphereShader.SetUniform($"uRayOccluders[{i}]", new Vector3(occ.X, occ.Y, occ.Z));
+                _sphereShader.SetUniform($"uRayOccluderRadius[{i}]", occ.W);
+            }
+
+            _sphereRenderer.Render(_gl, _sphereShader);
+            _gl.Disable(EnableCap.Blend);
         }
-        _sphereShader.SetUniform("uView", view);
-        _sphereShader.SetUniform("uProjection", projection);
-        _sphereShader.SetUniform("uViewPos", viewPos);
-        _sphereShader.SetUniform("uTime", _timeSeconds);
-        _sphereShader.SetUniform("uGlobalLuminosity", GlobalLuminosityScale);
-        _sphereShader.SetUniform("uGlobalGlow", GlobalGlowScale);
-        _sphereShader.SetUniform("uGlobalSaturation", GlobalSaturation);
-        _sphereShader.SetUniform("uUseAlbedoAtlas", EnableAlbedoTextureMaps && _albedoAtlas != null ? 1 : 0);
-        _sphereShader.SetUniform("uBodyAlbedoAtlas", 1);
-        _sphereShader.SetUniform("uAlbedoBlend", System.Math.Clamp(AlbedoTextureBlend, 0.0f, 1.0f));
-        _sphereShader.SetUniform("uEnableStarLighting", EnableStarDrivenLighting ? 1 : 0);
-        _sphereShader.SetUniform("uStarLightCount", _starLightCount);
-        _sphereShader.SetUniform("uStarLightFalloff", System.Math.Clamp(StarLightFalloff, 0.05f, 4.0f));
-        _sphereShader.SetUniform("uAmbientFloor", System.Math.Clamp(AmbientLightFloor, 0.01f, 0.5f));
-        _sphereShader.SetUniform("uRayTraceShadows", EnableRayTracedShadows ? 1 : 0);
-        _sphereShader.SetUniform("uRayOccluderCount", _rayOccluderCount);
-        _sphereShader.SetUniform("uRayShadowStrength", System.Math.Clamp(RayShadowStrength, 0.0f, 1.0f));
-        _sphereShader.SetUniform("uRayShadowSoftness", System.Math.Clamp(RayShadowSoftness, 0.0005f, 0.20f));
-        _sphereShader.SetUniform("uBhQualityTier", (int)BlackHoleQualityTier);
-        _sphereShader.SetUniform("uBhPreset", (int)BlackHolePreset);
-        _sphereShader.SetUniform("uBhRingThickness", System.Math.Clamp(BlackHoleRingThickness, 0.08f, 1.0f));
-        _sphereShader.SetUniform("uBhLensStrength", System.Math.Clamp(BlackHoleLensingStrength, 0.0f, 2.5f));
-        _sphereShader.SetUniform("uBhDopplerBoost", System.Math.Clamp(BlackHoleDopplerBoost, 0.0f, 3.0f));
-        _sphereShader.SetUniform("uBhOpticalDepth", System.Math.Clamp(BlackHoleOpticalDepth, 0.0f, 4.0f));
-        _sphereShader.SetUniform("uBhTemperatureScale", System.Math.Clamp(BlackHoleTemperatureScale, 0.25f, 3.0f));
-        _sphereShader.SetUniform("uBhBloomScale", System.Math.Clamp(BlackHoleBloomScale, 0.0f, 2.5f));
-        _sphereShader.SetUniform("uBhDebugMode", (int)BlackHoleDebugMode);
-        _sphereShader.SetUniform("uBhParticleHeat", System.Math.Clamp(_bhParticleHeat, 0.0f, 1.0f));
-        _sphereShader.SetUniform("uBhParticleDensity", System.Math.Clamp(_bhParticleDensity, 0.0f, 1.0f));
 
-        for (int i = 0; i < _starLightCount; i++)
-        {
-            Vector4 light = _starLightData[i];
-            _sphereShader.SetUniform($"uStarLights[{i}]", new Vector3(light.X, light.Y, light.Z));
-            _sphereShader.SetUniform($"uStarLightIntensity[{i}]", light.W);
-            _sphereShader.SetUniform($"uStarLightColor[{i}]", _starLightColorData[i]);
-        }
-
-        for (int i = 0; i < _rayOccluderCount; i++)
-        {
-            Vector4 occ = _rayOccluderData[i];
-            _sphereShader.SetUniform($"uRayOccluders[{i}]", new Vector3(occ.X, occ.Y, occ.Z));
-            _sphereShader.SetUniform($"uRayOccluderRadius[{i}]", occ.W);
-        }
-
-        _sphereRenderer.Render(_gl, _sphereShader);
-        _gl.Disable(EnableCap.Blend);
-
-        if (_effectBodyCount > 0)
+        if (renderSceneBodies && _effectBodyCount > 0)
         {
             _gl.Enable(EnableCap.Blend);
             _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
             _gl.DepthMask(false);
-            _effectSphereRenderer.Render(_gl, _sphereShader);
+            _effectSphereRenderer.Render(_gl, _sphereShader!);
             _gl.DepthMask(true);
             _gl.Disable(EnableCap.Blend);
         }
 
-        if (ShowAccretionDisks && _accretionDiskRenderer != null)
+        if (renderParticles && ShowAccretionDisks && _accretionDiskRenderer != null)
         {
             var viewProjection = view * projection;
             _accretionDiskRenderer.ConfigureBlackHoleVisuals(
@@ -696,13 +1045,13 @@ public class GLRenderer : IDisposable
                 dopplerBoost: System.Math.Clamp(BlackHoleDopplerBoost, 0.0f, 3.0f),
                 opticalDepth: System.Math.Clamp(BlackHoleOpticalDepth, 0.0f, 4.0f),
                 temperatureScale: System.Math.Clamp(BlackHoleTemperatureScale, 0.25f, 3.0f),
-                bloomScale: System.Math.Clamp(BlackHoleBloomScale, 0.0f, 2.5f),
+                bloomScale: System.Math.Clamp(BlackHoleBloomScale * bloomEnabled * bloomIntensity * bloomRadiusScale * particleEmission, 0.0f, 4.0f),
                 debugMode: (int)BlackHoleDebugMode);
             _accretionDiskRenderer.Draw(viewProjection);
         }
 
         // Render line overlays (trails, velocity arrows, placement vectors)
-        if (_lineRenderer.HasLines)
+        if (_lineRenderer.HasLines && !renderOnlyParticles)
         {
             _gl.Enable(EnableCap.Blend);
             _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -713,6 +1062,108 @@ public class GLRenderer : IDisposable
             _lineRenderer.Render(_gl, _lineShader);
             _gl.LineWidth(1.0f);
             _gl.Disable(EnableCap.Blend);
+        }
+    }
+
+    private void ApplyAdaptivePerformanceControl(float deltaTime)
+    {
+        if (deltaTime <= 0.0f)
+            return;
+
+        float fps = 1.0f / System.Math.Max(deltaTime, 1e-4f);
+        if (fps >= 50.0f)
+            return;
+
+        _settings.MaxParticles = System.Math.Clamp((int)(_settings.MaxParticles * 0.9f), 250, AccretionRendererCapacity);
+        _settings.BloomRadius = System.Math.Clamp(_settings.BloomRadius * 0.9f, 1.0f, 20.0f);
+        _settings.MaxReflectionSamples = System.Math.Clamp(_settings.MaxReflectionSamples - 1, 1, 16);
+        _settings.MaxExplosionRadius = System.Math.Clamp(_settings.MaxExplosionRadius * 0.98f, 4.0f, 80.0f);
+    }
+
+    private void RenderBackgroundPass(int width, int height, Vector3 viewPos, float exposure, float starEmission)
+    {
+        if (_gl == null)
+            return;
+
+        _gl.Disable(EnableCap.CullFace);
+        _gl.Disable(EnableCap.DepthTest);
+
+        _backgroundShader!.Use();
+        _backgroundShader.SetUniform("uTime", _timeSeconds);
+        _backgroundShader.SetUniform("uResolution", new Vector2(width, height));
+        _backgroundShader.SetUniform("uCameraPos", viewPos);
+        _backgroundShader.SetUniform("uExposure", exposure);
+        _backgroundShader.SetUniform("uStarEmissionMultiplier", starEmission);
+        _backgroundShader.SetUniform("uNebulaEmissionMultiplier", System.Math.Clamp(_settings.NebulaEmissionMultiplier, 0.0f, 4.0f));
+        _backgroundShader.SetUniform("uFogDensity", System.Math.Clamp(_settings.FogDensity, 0.0f, 0.2f));
+        _backgroundShader.SetUniform("uFogColor", _settings.FogColor);
+        _backgroundRenderer.Render(_gl);
+
+        _gl.Enable(EnableCap.DepthTest);
+        _gl.Enable(EnableCap.CullFace);
+        _gl.CullFace(TriangleFace.Back);
+    }
+
+    private unsafe void EnsureReflectionBuffers(int width, int height)
+    {
+        if (_gl == null)
+            return;
+
+        int safeWidth = System.Math.Max(1, width);
+        int safeHeight = System.Math.Max(1, height);
+        if (_reflectionFbo != 0 && safeWidth == _reflectionBufferWidth && safeHeight == _reflectionBufferHeight)
+            return;
+
+        ReleaseReflectionBuffers();
+
+        _reflectionBufferWidth = safeWidth;
+        _reflectionBufferHeight = safeHeight;
+
+        _reflectionFbo = _gl.GenFramebuffer();
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _reflectionFbo);
+
+        _reflectionColorTex = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, _reflectionColorTex);
+        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.Rgba16f, (uint)_reflectionBufferWidth, (uint)_reflectionBufferHeight, 0, PixelFormat.Rgba, PixelType.Float, null);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _reflectionColorTex, 0);
+
+        _reflectionDepthTex = _gl.GenTexture();
+        _gl.BindTexture(TextureTarget.Texture2D, _reflectionDepthTex);
+        _gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.DepthComponent24, (uint)_reflectionBufferWidth, (uint)_reflectionBufferHeight, 0, PixelFormat.DepthComponent, PixelType.Float, null);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Nearest);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Nearest);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+        _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, _reflectionDepthTex, 0);
+
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+    }
+
+    private void ReleaseReflectionBuffers()
+    {
+        if (_gl == null)
+            return;
+
+        if (_reflectionColorTex != 0)
+        {
+            _gl.DeleteTexture(_reflectionColorTex);
+            _reflectionColorTex = 0;
+        }
+
+        if (_reflectionDepthTex != 0)
+        {
+            _gl.DeleteTexture(_reflectionDepthTex);
+            _reflectionDepthTex = 0;
+        }
+
+        if (_reflectionFbo != 0)
+        {
+            _gl.DeleteFramebuffer(_reflectionFbo);
+            _reflectionFbo = 0;
         }
     }
 
@@ -978,6 +1429,7 @@ public class GLRenderer : IDisposable
 
     public void Dispose()
     {
+        ReleaseReflectionBuffers();
         _sphereRenderer.Dispose();
         _effectSphereRenderer.Dispose();
         _accretionDiskRenderer?.Dispose();
