@@ -57,9 +57,6 @@ public sealed partial class SimulationSettingsViewModel : ObservableObject
     private bool _useSimd;
 
     [ObservableProperty]
-    private bool _useNativeGpuBackend;
-
-    [ObservableProperty]
     private bool _useSoAPath = true;
 
     // ── Algorithm ──────────────────────────────────────────────────
@@ -132,7 +129,6 @@ public sealed partial class SimulationSettingsViewModel : ObservableObject
             DeterministicMode = c.DeterministicMode;
             UseParallelComputation = c.UseParallelComputation;
             UseSimd = c.UseSimd;
-            UseNativeGpuBackend = c.UseNativeGpuBackend;
             UseSoAPath = c.UseSoAPath;
             UseBarnesHut = c.UseBarnesHut;
             Theta = c.Theta;
@@ -160,7 +156,6 @@ public sealed partial class SimulationSettingsViewModel : ObservableObject
             config.DeterministicMode = DeterministicMode;
             config.UseParallelComputation = UseParallelComputation;
             config.UseSimd = UseSimd;
-            config.UseNativeGpuBackend = UseNativeGpuBackend;
             config.UseSoAPath = UseSoAPath;
             config.UseBarnesHut = UseBarnesHut;
             config.Theta = Theta;

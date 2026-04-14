@@ -14,6 +14,7 @@ public static class Program
             API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.Default, new APIVersion(3, 3)),
             VSync = true,
             ShouldSwapAutomatically = true,
+            IsVisible = false,
         };
 
         var window = Window.Create(options);

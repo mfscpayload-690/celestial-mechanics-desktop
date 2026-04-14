@@ -219,7 +219,7 @@ public class SimulationService : IDisposable
         lock (_engineLock)
         {
             mutate(_engine.Config);
-            _engine.ApplyConfig();
+            _engine.Reconfigure();
         }
     }
 

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using CelestialMechanics.Desktop.Core;
 using CelestialMechanics.Desktop.Infrastructure.Security;
 using CelestialMechanics.Desktop.Services;
 using CelestialMechanics.Desktop.ViewModels;
@@ -37,6 +38,10 @@ public partial class App : Application
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices((_, services) =>
             {
+                // ── Global application state and navigation ─────
+                services.AddSingleton<AppState>();
+                services.AddSingleton<NavigationService>();
+
                 // ── Backend engine (already exists) ──────────────
                 services.AddSingleton<SimulationEngine>();
 
@@ -51,28 +56,40 @@ public partial class App : Application
                 services.AddSingleton<IProjectService>(sp =>
                     new ProjectServiceAdapter(sp.GetRequiredService<ProjectService>()));
                 services.AddSingleton<INotificationService, NotificationService>();
+                services.AddSingleton<SimulationPanelLauncher>();
 
                 // ── ViewModels ───────────────────────────────────
-                services.AddTransient<MainWindowViewModel>();
-                services.AddTransient<ModeSelectViewModel>();
-                services.AddTransient<SimulationIDEViewModel>();
-                services.AddTransient<SceneOutlinerViewModel>();
-                services.AddTransient<BodyInspectorViewModel>();
-                services.AddTransient<SimulationSettingsViewModel>();
-                services.AddTransient<AnalysisPanelViewModel>();
-                services.AddTransient<NotificationViewModel>();
+                services.AddSingleton<MainWindowViewModel>();
+                services.AddSingleton(sp => new SimulationViewModel(
+                    Dispatcher.CurrentDispatcher,
+                    sp.GetRequiredService<SimulationService>(),
+                    sp.GetRequiredService<SceneService>(),
+                    sp.GetRequiredService<ProjectService>()));
+
+                // ── View host targets ────────────────────────────
+                services.AddSingleton<HomeView>();
+                services.AddSingleton<SimulationView>();
+                services.AddSingleton<AnalysisView>();
+
+                // ── Root shell window ────────────────────────────
+                services.AddSingleton<MainWindow>();
             })
             .Build();
 
         Services = _host.Services;
 
-        // Start with the Splash Window
-        var splash = new SplashWindow();
-        splash.Show();
+        var mainWindow = Services.GetRequiredService<MainWindow>();
+        MainWindow = mainWindow;
+
+        var appState = Services.GetRequiredService<AppState>();
+        appState.SetMode(AppMode.Home);
+
+        mainWindow.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Services.GetService<SimulationViewModel>()?.Dispose();
         _host?.Dispose();
         base.OnExit(e);
     }
