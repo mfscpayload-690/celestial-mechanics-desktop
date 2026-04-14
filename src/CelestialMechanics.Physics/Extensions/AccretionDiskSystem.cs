@@ -44,6 +44,9 @@ public sealed class AccretionDiskSystem : IAccretionModel
     /// <summary>Exponential decay timescale for accretion rate (sim time units).</summary>
     public double AccretionDecayTimescale { get; set; } = 10.0;
 
+    /// <summary>Effective viscous heating coefficient for disk particles.</summary>
+    public double ViscosityFactor { get; set; } = 5e-6;
+
     /// <summary>Read-only access to particle array for rendering.</summary>
     public ReadOnlySpan<DiskParticle> Particles => _particles.AsSpan(0, _particles.Length);
 
@@ -88,7 +91,8 @@ public sealed class AccretionDiskSystem : IAccretionModel
         double cpx, double cpy, double cpz,
         double apx, double apy, double apz,
         double avx, double avy, double avz,
-        double dt, double time)
+        double dt, double time,
+        double compactMass = -1.0)
     {
         if (!_accretionStates.TryGetValue(compactBodyIndex, out var state))
         {
@@ -138,7 +142,8 @@ public sealed class AccretionDiskSystem : IAccretionModel
         }
 
         // Spawn disk particles
-        SpawnDiskParticles(compactBodyIndex, cpx, cpy, cpz, dx, dy, dz, avx, avy, avz, absorbedMass, state);
+        double parentMass = compactMass > 0.0 ? compactMass : System.Math.Max(absorbedMass, 1e-8);
+        SpawnDiskParticles(compactBodyIndex, cpx, cpy, cpz, dx, dy, dz, avx, avy, avz, absorbedMass, parentMass, state);
     }
 
     private void SpawnDiskParticles(
@@ -146,10 +151,12 @@ public sealed class AccretionDiskSystem : IAccretionModel
         double cx, double cy, double cz,
         double dx, double dy, double dz,
         double vx, double vy, double vz,
-        double mass, AccretionState state)
+        double absorbedMass,
+        double parentMass,
+        AccretionState state)
     {
         // Number of particles proportional to absorbed mass (capped)
-        int count = System.Math.Min(50, System.Math.Max(5, (int)(mass * 100)));
+        int count = System.Math.Min(50, System.Math.Max(5, (int)(absorbedMass * 100)));
 
         double dist = System.Math.Sqrt(dx * dx + dy * dy + dz * dz);
         double innerRadius = dist * 0.1;  // Near ISCO
@@ -177,7 +184,7 @@ public sealed class AccretionDiskSystem : IAccretionModel
             p.PosZ = cz + r * (cosA * e1z + sinA * e2z);
 
             // Circular velocity: v_circ = sqrt(G·M/r), tangent in disk plane
-            double vCirc = System.Math.Sqrt(PhysicalConstants.G_Sim * mass / System.Math.Max(r, 1e-10));
+            double vCirc = System.Math.Sqrt(PhysicalConstants.G_Sim * System.Math.Max(parentMass, 1e-10) / System.Math.Max(r, 1e-10));
             p.VelX = vCirc * (-sinA * e1x + cosA * e2x);
             p.VelY = vCirc * (-sinA * e1y + cosA * e2y);
             p.VelZ = vCirc * (-sinA * e1z + cosA * e2z);
@@ -329,6 +336,9 @@ public sealed class AccretionDiskSystem : IAccretionModel
         p.PosX += p.VelX * dt;
         p.PosY += p.VelY * dt;
         p.PosZ += p.VelZ * dt;
+
+        double speed2 = p.VelX * p.VelX + p.VelY * p.VelY + p.VelZ * p.VelZ;
+        p.Temperature += ViscosityFactor * speed2 * dt;
 
         p.OrbitalRadius = dist;
 

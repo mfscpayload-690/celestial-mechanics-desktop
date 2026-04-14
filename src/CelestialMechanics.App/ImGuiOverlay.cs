@@ -296,6 +296,7 @@ public class ImGuiOverlay
     {
         ApplyModeRules();
 
+        RenderMainMenuBar();
         RenderTopMenus();
 
         if (_showSimulationControls)
@@ -314,6 +315,283 @@ public class ImGuiOverlay
             RenderSimulationInsights();
 
         RenderBottomControlPanel();
+    }
+
+    private void RenderMainMenuBar()
+    {
+        if (!ImGui.BeginMainMenuBar())
+            return;
+
+        var settings = _renderer.Settings;
+
+        if (ImGui.BeginMenu("File"))
+        {
+            if (ImGui.MenuItem("New Project"))
+            {
+                _engine.Stop();
+                _engine.SetBodies(Array.Empty<PhysicsBody>());
+                _selectionContext.SelectedBodyId = -1;
+                ResetStabilityBaselines();
+            }
+
+            if (ImGui.MenuItem("Open Project"))
+                LoadScenario(_scenarioName);
+
+            if (ImGui.MenuItem("Save"))
+                SaveScenario(_scenarioName);
+
+            if (ImGui.MenuItem("Save As"))
+                SaveScenario($"{_scenarioName}_{{time}}");
+
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Close Project"))
+            {
+                _engine.Pause();
+                _engine.SetBodies(Array.Empty<PhysicsBody>());
+                _selectionContext.SelectedBodyId = -1;
+                ResetStabilityBaselines();
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Exit to Home"))
+                Environment.Exit(0);
+
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Edit"))
+        {
+            ImGui.MenuItem("Undo", "Ctrl+Z", false, false);
+            ImGui.MenuItem("Redo", "Ctrl+Y", false, false);
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Reset Simulation"))
+            {
+                _resetSimulation();
+                ResetStabilityBaselines();
+            }
+
+            if (ImGui.MenuItem("Clear All Bodies"))
+            {
+                _engine.SetBodies(Array.Empty<PhysicsBody>());
+                _selectionContext.SelectedBodyId = -1;
+                ResetStabilityBaselines();
+            }
+
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("View"))
+        {
+            if (ImGui.BeginMenu("Scene"))
+            {
+                bool grid = _renderer.ShowGrid;
+                if (ImGui.MenuItem("Grid", string.Empty, grid))
+                    _renderer.ShowGrid = !grid;
+
+                bool axes = settings.ShowAxes;
+                if (ImGui.MenuItem("Axes", string.Empty, axes))
+                    settings.ShowAxes = !axes;
+
+                bool orbits = _renderer.ShowPersistentOrbitPaths;
+                if (ImGui.MenuItem("Orbits", string.Empty, orbits))
+                    _renderer.ShowPersistentOrbitPaths = !orbits;
+
+                bool trails = _renderer.ShowOrbitalTrails;
+                if (ImGui.MenuItem("Trails", string.Empty, trails))
+                {
+                    bool newValue = !trails;
+                    _renderer.ShowOrbitalTrails = newValue;
+                    settings.EnableTrails = newValue;
+                }
+
+                ImGui.EndMenu();
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.BeginMenu("Rendering"))
+            {
+                bool bloom = settings.EnableBloom;
+                if (ImGui.MenuItem("Bloom", string.Empty, bloom))
+                    settings.EnableBloom = !bloom;
+
+                bool particles = settings.EnableParticles;
+                if (ImGui.MenuItem("Particles", string.Empty, particles))
+                {
+                    bool newValue = !particles;
+                    settings.EnableParticles = newValue;
+                    _renderer.ShowAccretionDisks = newValue;
+                }
+
+                bool waves = settings.EnableWaves;
+                if (ImGui.MenuItem("Gravitational Waves", string.Empty, waves))
+                {
+                    bool newValue = !waves;
+                    settings.EnableWaves = newValue;
+                    settings.ShowGravitationalWaves = newValue;
+                }
+
+                bool reflections = settings.EnableReflections;
+                if (ImGui.MenuItem("Reflections", string.Empty, reflections))
+                    settings.EnableReflections = !reflections;
+
+                ImGui.EndMenu();
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.BeginMenu("Debug"))
+            {
+                bool velocityVectors = _renderer.ShowVelocityArrows;
+                if (ImGui.MenuItem("Velocity Vectors", string.Empty, velocityVectors))
+                    _renderer.ShowVelocityArrows = !velocityVectors;
+
+                bool forceVectors = settings.ShowForceVectors;
+                if (ImGui.MenuItem("Force Vectors", string.Empty, forceVectors))
+                    settings.ShowForceVectors = !forceVectors;
+
+                bool boundingBoxes = settings.ShowBoundingBoxes;
+                if (ImGui.MenuItem("Bounding Boxes", string.Empty, boundingBoxes))
+                    settings.ShowBoundingBoxes = !boundingBoxes;
+
+                ImGui.EndMenu();
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.BeginMenu("Panels"))
+            {
+                if (ImGui.MenuItem("Inspector", string.Empty, _showBodyInspector))
+                    _showBodyInspector = !_showBodyInspector;
+
+                bool statisticsVisible = _showEnergyMonitor && _showPerformance;
+                if (ImGui.MenuItem("Statistics", string.Empty, statisticsVisible))
+                {
+                    bool newValue = !statisticsVisible;
+                    _showEnergyMonitor = newValue;
+                    _showPerformance = newValue;
+                }
+
+                ImGui.EndMenu();
+            }
+
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Run"))
+        {
+            if (ImGui.MenuItem("Start"))
+                _engine.Start();
+
+            if (ImGui.MenuItem("Pause"))
+                _engine.Pause();
+
+            if (ImGui.MenuItem("Step Forward"))
+                _engine.StepOnce();
+
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Increase Speed"))
+            {
+                _timeFlowValue = System.Math.Clamp(_timeFlowValue * 2.0f, 1f, 100000f);
+                _manualTimeFlowInput = _timeFlowValue;
+            }
+
+            if (ImGui.MenuItem("Decrease Speed"))
+            {
+                _timeFlowValue = System.Math.Clamp(_timeFlowValue * 0.5f, 1f, 100000f);
+                _manualTimeFlowInput = _timeFlowValue;
+            }
+
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Tools"))
+        {
+            if (ImGui.MenuItem("Create Planet"))
+                CreateQuickBody(BodyType.Planet, 0.001, 0.03, 288.0, 0.0);
+
+            if (ImGui.MenuItem("Create Star"))
+                CreateQuickBody(BodyType.Star, 1.1, 0.1, 5800.0, 3.828e26);
+
+            if (ImGui.MenuItem("Create Black Hole"))
+                CreateQuickBody(BodyType.BlackHole, 10.0, 1e-4, 3.0e4, 0.0);
+
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Trigger Supernova"))
+            {
+                bool triggered = false;
+                var bodies = _engine.Bodies;
+
+                int selectedId = _selectionContext.SelectedBodyId;
+                if (selectedId >= 0)
+                    triggered = _engine.TriggerSupernova(selectedId);
+
+                if (!triggered)
+                {
+                    for (int i = 0; i < bodies.Length; i++)
+                    {
+                        if (!bodies[i].IsActive)
+                            continue;
+                        if (bodies[i].Type != BodyType.Star && bodies[i].Type != BodyType.NeutronStar)
+                            continue;
+
+                        triggered = _engine.TriggerSupernova(bodies[i].Id);
+                        if (triggered)
+                            break;
+                    }
+                }
+
+                if (triggered)
+                    ResetStabilityBaselines();
+            }
+
+            if (ImGui.MenuItem("Trigger Big Bang"))
+                _renderer.Settings.EnableBigBangMode = true;
+
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Help"))
+        {
+            if (ImGui.MenuItem("About"))
+                _cliHistory.Add("About: Celestial Mechanics - Scientific Simulation Engine.");
+
+            if (ImGui.MenuItem("Controls Guide"))
+                _cliHistory.Add("Controls: Mouse orbit/pan/zoom, panel toggles in Floating Panels, menu commands on top bar.");
+
+            if (ImGui.MenuItem("Diagnostics"))
+                _cliHistory.Add($"Diagnostics: state={_engine.State}, bodies={_engine.Bodies.Length}, simTime={_engine.CurrentTime:F3}, speed={TimeScaleMultiplier:F2}x");
+
+            ImGui.EndMenu();
+        }
+
+        ImGui.EndMainMenuBar();
+    }
+
+    private void CreateQuickBody(BodyType type, double mass, double radius, double temperature, double luminosity)
+    {
+        int nextId = _nextBodyId;
+        if (_engine.Bodies.Length > 0)
+            nextId = System.Math.Max(nextId, _engine.Bodies.Max(b => b.Id) + 1);
+
+        var lane = ((nextId % 7) - 3) * 0.35;
+        var body = new PhysicsBody(nextId, mass, new Vec3d(lane, 0, 0), Vec3d.Zero, type)
+        {
+            Radius = System.Math.Max(radius, 1e-4),
+            Temperature = temperature,
+            Luminosity = luminosity,
+            IsActive = true,
+            IsCollidable = true
+        };
+
+        _engine.AddBody(body);
+        _nextBodyId = nextId + 1;
+        ResetStabilityBaselines();
     }
 
     private void RenderTopMenus()
@@ -798,6 +1076,10 @@ public class ImGuiOverlay
                 if(ent.IsActive && ent.HasComponent<CelestialMechanics.Simulation.Components.PhysicsComponent>())
                 {
                     var pc = ent.GetComponent<CelestialMechanics.Simulation.Components.PhysicsComponent>();
+                    if (pc == null)
+                    {
+                        continue;
+                    }
                     int bId = pc.BodyIndex >= 0 ? pc.BodyIndex : loadedIdCounter++;
                     bodies.Add(new PhysicsBody(bId, pc.Mass, pc.Position, pc.Velocity, BodyType.Custom) {
                         Radius = pc.Radius,
@@ -1031,6 +1313,7 @@ public class ImGuiOverlay
         }
 
         _engine.SetBodies(bodies.ToArray());
+        _renderer.Settings.EnableBigBangMode = true;
     }
 
     private void ApplyNebulaPreset()
@@ -1216,17 +1499,49 @@ public class ImGuiOverlay
         var (controlDtLabel, controlDtColor, controlDtRatio) = GetTimestepStability();
         ImGui.TextColored(controlDtColor, $"Stability: {controlDtLabel} ({controlDtRatio * 100.0:F0}% max dt)");
 
+        var renderSettings = _renderer.Settings;
+
         bool trails = _renderer.ShowOrbitalTrails;
         if (ImGui.Checkbox("Orbital Trails", ref trails))
+        {
+            renderSettings.EnableTrails = trails;
             _renderer.ShowOrbitalTrails = trails;
+        }
 
         bool persistentPaths = _renderer.ShowPersistentOrbitPaths;
         if (ImGui.Checkbox("Persistent Orbit Paths", ref persistentPaths))
             _renderer.ShowPersistentOrbitPaths = persistentPaths;
 
-        bool accretionDisks = _renderer.ShowAccretionDisks;
+        bool accretionDisks = renderSettings.EnableParticles;
         if (ImGui.Checkbox("Accretion Disks", ref accretionDisks))
+        {
+            renderSettings.EnableParticles = accretionDisks;
             _renderer.ShowAccretionDisks = accretionDisks;
+        }
+
+        bool waves = renderSettings.EnableWaves;
+        if (ImGui.Checkbox("Gravitational Wave Visuals", ref waves))
+            renderSettings.EnableWaves = waves;
+
+        bool bloom = renderSettings.EnableBloom;
+        if (ImGui.Checkbox("Bloom", ref bloom))
+            renderSettings.EnableBloom = bloom;
+
+        bool hdr = renderSettings.EnableHdr;
+        if (ImGui.Checkbox("HDR", ref hdr))
+            renderSettings.EnableHdr = hdr;
+
+        bool reflections = renderSettings.EnableReflections;
+        if (ImGui.Checkbox("Reflections (SSR-lite)", ref reflections))
+            renderSettings.EnableReflections = reflections;
+
+        bool glowScaling = renderSettings.EnableGlowScaling;
+        if (ImGui.Checkbox("Distance Glow Scaling", ref glowScaling))
+            renderSettings.EnableGlowScaling = glowScaling;
+
+        bool explosions = renderSettings.EnableExplosions;
+        if (ImGui.Checkbox("Cinematic Explosions", ref explosions))
+            renderSettings.EnableExplosions = explosions;
 
         bool background = _renderer.ShowBackground;
         if (ImGui.Checkbox("Space Background", ref background))
@@ -1250,6 +1565,38 @@ public class ImGuiOverlay
 
         ImGui.Separator();
         ImGui.Text("Visual Tuning");
+
+        float exposure = renderSettings.Exposure;
+        if (ImGui.SliderFloat("Exposure", ref exposure, 0.1f, 4.0f, "%.2f"))
+            renderSettings.Exposure = exposure;
+
+        float bloomIntensity = renderSettings.BloomIntensity;
+        if (ImGui.SliderFloat("Bloom Intensity", ref bloomIntensity, 0.0f, 4.0f, "%.2f"))
+            renderSettings.BloomIntensity = bloomIntensity;
+
+        float bloomRadius = renderSettings.BloomRadius;
+        if (ImGui.SliderFloat("Bloom Radius", ref bloomRadius, 1.0f, 20.0f, "%.2f"))
+            renderSettings.BloomRadius = bloomRadius;
+
+        int maxParticles = renderSettings.MaxParticles;
+        if (ImGui.SliderInt("Renderer Max Particles", ref maxParticles, 250, 20000))
+            renderSettings.MaxParticles = maxParticles;
+
+        int maxReflectionSamples = renderSettings.MaxReflectionSamples;
+        if (ImGui.SliderInt("Max Reflection Samples", ref maxReflectionSamples, 1, 16))
+            renderSettings.MaxReflectionSamples = maxReflectionSamples;
+
+        float reflectionScale = renderSettings.ReflectionScale;
+        if (ImGui.SliderFloat("Reflection Scale", ref reflectionScale, 0.001f, 0.04f, "%.4f"))
+            renderSettings.ReflectionScale = reflectionScale;
+
+        float glowDistanceScale = renderSettings.GlowDistanceScale;
+        if (ImGui.SliderFloat("Glow Distance Scale", ref glowDistanceScale, 2.0f, 180.0f, "%.1f"))
+            renderSettings.GlowDistanceScale = glowDistanceScale;
+
+        float maxExplosionRadius = renderSettings.MaxExplosionRadius;
+        if (ImGui.SliderFloat("Max Explosion Radius", ref maxExplosionRadius, 4.0f, 80.0f, "%.1f"))
+            renderSettings.MaxExplosionRadius = maxExplosionRadius;
 
         float glow = _renderer.GlobalGlowScale;
         if (ImGui.SliderFloat("Glow Scale", ref glow, 0.0f, 2.0f, "%.2f"))
@@ -1342,6 +1689,22 @@ public class ImGuiOverlay
         float bloomScale = _renderer.BlackHoleBloomScale;
         if (ImGui.SliderFloat("BH Bloom/Glow", ref bloomScale, 0.0f, 2.5f, "%.2f"))
             _renderer.BlackHoleBloomScale = bloomScale;
+
+        float starEmission = renderSettings.StarEmissionMultiplier;
+        if (ImGui.SliderFloat("Star Emission", ref starEmission, 0.0f, 4.0f, "%.2f"))
+            renderSettings.StarEmissionMultiplier = starEmission;
+
+        float particleEmission = renderSettings.ParticleEmissionMultiplier;
+        if (ImGui.SliderFloat("Particle Emission", ref particleEmission, 0.0f, 4.0f, "%.2f"))
+            renderSettings.ParticleEmissionMultiplier = particleEmission;
+
+        bool debugParticles = renderSettings.DebugOnlyParticles;
+        if (ImGui.Checkbox("Debug: Only Particles", ref debugParticles))
+            renderSettings.DebugOnlyParticles = debugParticles;
+
+        bool debugWaves = renderSettings.DebugOnlyWaves;
+        if (ImGui.Checkbox("Debug: Only Waves", ref debugWaves))
+            renderSettings.DebugOnlyWaves = debugWaves;
 
         var debugNames = Enum.GetNames<BlackHoleDebugView>();
         int debugIndex = (int)_renderer.BlackHoleDebugMode;

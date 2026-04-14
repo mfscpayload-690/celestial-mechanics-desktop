@@ -1,3 +1,5 @@
+using CelestialMechanics.Math;
+using CelestialMechanics.Physics.Astrophysics;
 using CelestialMechanics.Physics.SoA;
 using CelestialMechanics.Physics.Extensions;
 using CelestialMechanics.Physics.Types;
@@ -113,7 +115,14 @@ public sealed class CollisionResolver
             double relNormalSpeed = rvx * nx + rvy * ny + rvz * nz;
             double relSpeed = System.Math.Sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
 
-            CollisionOutcome outcome = SelectOutcome(soa, a, b, relSpeed);
+            CollisionEnergyResult energyResult = CollisionEnergyModel.Evaluate(
+                m1Solar: ma,
+                m2Solar: mb,
+                effectiveRadiusAu: 0.5 * System.Math.Max(soa.Radius[a] + soa.Radius[b], 1e-12),
+                relativeSpeedSim: relSpeed,
+                maxMassLossFraction: _fragmentationMassLossCap);
+
+            CollisionOutcome outcome = SelectOutcome(soa, a, b, energyResult);
 
             if (_mode == CollisionMode.BounceOnly)
                 outcome = CollisionOutcome.Bounce;
@@ -139,7 +148,8 @@ public sealed class CollisionResolver
                         dt, time,
                         accretionDisk,
                         promoteCompactRemnants,
-                        outcome);
+                        outcome,
+                        energyResult);
                     break;
                 }
 
@@ -148,11 +158,17 @@ public sealed class CollisionResolver
                     ResolveImpulse(soa, a, b, nx, ny, nz, relNormalSpeed, GetRestitution(soa, a, b) * 0.35);
                     PositionalCorrection(soa, a, b, evt.OverlapDepth, nx, ny, nz);
 
-                    double specificEnergy = ComputeSpecificImpactEnergy(ma, mb, relSpeed);
-                    double severity = specificEnergy / _fragmentationThreshold;
-                    double ejectFrac = System.Math.Clamp(0.05 + 0.15 * severity, 0.02, _fragmentationMassLossCap);
-                    double ejectedMass = (ma + mb) * ejectFrac;
+                    double ejectedMass = UnitConversion.MassToSim(energyResult.EjectaMassKg);
+                    double ejectFrac = System.Math.Clamp(
+                        ejectedMass / System.Math.Max(ma + mb, 1e-15),
+                        0.02,
+                        _fragmentationMassLossCap);
                     double keepFrac = 1.0 - ejectFrac;
+
+                    var pBefore = new Vec3d(
+                        ma * soa.VelX[a] + mb * soa.VelX[b],
+                        ma * soa.VelY[a] + mb * soa.VelY[b],
+                        ma * soa.VelZ[a] + mb * soa.VelZ[b]);
 
                     soa.Mass[a] = System.Math.Max(1e-12, ma * keepFrac);
                     soa.Mass[b] = System.Math.Max(1e-12, mb * keepFrac);
@@ -161,13 +177,43 @@ public sealed class CollisionResolver
                     soa.Radius[a] = DensityModel.ComputeBodyRadius(soa.Mass[a], soa.Density[a], ta);
                     soa.Radius[b] = DensityModel.ComputeBodyRadius(soa.Mass[b], soa.Density[b], tb);
 
+                    ConservePairMomentum(soa, a, b, pBefore);
+
                     SyncBody(soa, bodies, a);
                     SyncBody(soa, bodies, b);
 
                     double keAfter = 0.5 * soa.Mass[a] * (soa.VelX[a] * soa.VelX[a] + soa.VelY[a] * soa.VelY[a] + soa.VelZ[a] * soa.VelZ[a]) +
                                      0.5 * soa.Mass[b] * (soa.VelX[b] * soa.VelX[b] + soa.VelY[b] * soa.VelY[b] + soa.VelZ[b] * soa.VelZ[b]);
 
-                    EmitBurst(soa, a, b, System.Math.Max(0.0, keBefore - keAfter), ma + mb, ejectedMass, outcome);
+                    EmitBurst(
+                        soa,
+                        a,
+                        b,
+                        System.Math.Max(0.0, keBefore - keAfter),
+                        ma + mb,
+                        ejectedMass,
+                        outcome,
+                        bindingEnergy: energyResult.BindingEnergyJ,
+                        expansionVelocity: energyResult.ExpansionVelocityMps,
+                        luminosity: energyResult.CollisionEnergyJ / System.Math.Max(UnitConversion.TimeToSI(dt), 1.0));
+                    break;
+                }
+
+                case CollisionOutcome.CatastrophicDisruption:
+                {
+                    ResolveCatastrophicDisruption(soa, bodies, a, b, energyResult);
+                    double ejectedMass = UnitConversion.MassToSim(energyResult.EjectaMassKg);
+                    EmitBurst(
+                        soa,
+                        a,
+                        b,
+                        energyResult.CollisionEnergyJ,
+                        ma + mb,
+                        ejectedMass,
+                        outcome,
+                        bindingEnergy: energyResult.BindingEnergyJ,
+                        expansionVelocity: energyResult.ExpansionVelocityMps,
+                        luminosity: energyResult.CollisionEnergyJ / System.Math.Max(UnitConversion.TimeToSI(dt), 1.0));
                     break;
                 }
 
@@ -181,7 +227,17 @@ public sealed class CollisionResolver
 
                     double keAfter = 0.5 * ma * (soa.VelX[a] * soa.VelX[a] + soa.VelY[a] * soa.VelY[a] + soa.VelZ[a] * soa.VelZ[a]) +
                                      0.5 * mb * (soa.VelX[b] * soa.VelX[b] + soa.VelY[b] * soa.VelY[b] + soa.VelZ[b] * soa.VelZ[b]);
-                    EmitBurst(soa, a, b, System.Math.Max(0.0, keBefore - keAfter), ma + mb, 0.0, outcome);
+                    EmitBurst(
+                        soa,
+                        a,
+                        b,
+                        System.Math.Max(0.0, keBefore - keAfter),
+                        ma + mb,
+                        0.0,
+                        outcome,
+                        bindingEnergy: energyResult.BindingEnergyJ,
+                        expansionVelocity: 0.0,
+                        luminosity: 0.0);
                     break;
                 }
             }
@@ -190,7 +246,7 @@ public sealed class CollisionResolver
         }
     }
 
-    private CollisionOutcome SelectOutcome(BodySoA soa, int a, int b, double relSpeed)
+    private CollisionOutcome SelectOutcome(BodySoA soa, int a, int b, CollisionEnergyResult energyResult)
     {
         var typeA = (BodyType)soa.BodyTypeIndex[a];
         var typeB = (BodyType)soa.BodyTypeIndex[b];
@@ -201,19 +257,13 @@ public sealed class CollisionResolver
         if (compactA || compactB)
             return CollisionOutcome.Accretion;
 
-        double ma = soa.Mass[a];
-        double mb = soa.Mass[b];
-        double sumR = soa.Radius[a] + soa.Radius[b];
-        double vEscape = System.Math.Sqrt(2.0 * (ma + mb) / System.Math.Max(1e-9, sumR));
-
-        double specificEnergy = ComputeSpecificImpactEnergy(ma, mb, relSpeed);
-        if (specificEnergy >= _fragmentationThreshold)
-            return CollisionOutcome.Fragmentation;
-
-        if (relSpeed <= _captureVelocityFactor * vEscape)
+        if (energyResult.IsMerge)
             return CollisionOutcome.Merge;
 
-        return CollisionOutcome.Bounce;
+        if (energyResult.IsFragmentation)
+            return CollisionOutcome.Fragmentation;
+
+        return CollisionOutcome.CatastrophicDisruption;
     }
 
     private void ResolveMerge(
@@ -225,7 +275,8 @@ public sealed class CollisionResolver
         double time,
         AccretionDiskSystem? accretionDisk,
         bool promoteCompactRemnants,
-        CollisionOutcome outcome)
+        CollisionOutcome outcome,
+        CollisionEnergyResult energyResult)
     {
         double ma = soa.Mass[a];
         double mb = soa.Mass[b];
@@ -260,7 +311,17 @@ public sealed class CollisionResolver
 
         MergePolicy.SyncToAoS(bodies, soa, a, b);
 
-        EmitBurst(soa, a, b, releasedEnergy, mTotal, 0.0, outcome);
+        EmitBurst(
+            soa,
+            a,
+            b,
+            releasedEnergy,
+            mTotal,
+            0.0,
+            outcome,
+            bindingEnergy: energyResult.BindingEnergyJ,
+            expansionVelocity: 0.0,
+            luminosity: releasedEnergy / System.Math.Max(UnitConversion.TimeToSI(dt), 1.0));
 
         var survivorType = (BodyType)soa.BodyTypeIndex[a];
         if (accretionDisk != null && IsCompactType(survivorType))
@@ -278,8 +339,58 @@ public sealed class CollisionResolver
                 avy: absorbedVy,
                 avz: absorbedVz,
                 dt: dt,
-                time: time);
+                time: time,
+                compactMass: soa.Mass[a]);
         }
+    }
+
+    private static void ResolveCatastrophicDisruption(
+        BodySoA soa,
+        PhysicsBody[] bodies,
+        int a,
+        int b,
+        CollisionEnergyResult energyResult)
+    {
+        double ma = soa.Mass[a];
+        double mb = soa.Mass[b];
+        double totalMass = ma + mb;
+        if (totalMass <= 0.0)
+            return;
+
+        double ejectedSolar = UnitConversion.MassToSim(energyResult.EjectaMassKg);
+        double survivorMass = System.Math.Max(1e-12, totalMass - ejectedSolar);
+
+        double px = ma * soa.VelX[a] + mb * soa.VelX[b];
+        double py = ma * soa.VelY[a] + mb * soa.VelY[b];
+        double pz = ma * soa.VelZ[a] + mb * soa.VelZ[b];
+
+        soa.PosX[a] = (ma * soa.PosX[a] + mb * soa.PosX[b]) / totalMass;
+        soa.PosY[a] = (ma * soa.PosY[a] + mb * soa.PosY[b]) / totalMass;
+        soa.PosZ[a] = (ma * soa.PosZ[a] + mb * soa.PosZ[b]) / totalMass;
+        soa.VelX[a] = px / survivorMass;
+        soa.VelY[a] = py / survivorMass;
+        soa.VelZ[a] = pz / survivorMass;
+        soa.Mass[a] = survivorMass;
+
+        BodyType typeA = (BodyType)soa.BodyTypeIndex[a];
+        BodyType typeB = (BodyType)soa.BodyTypeIndex[b];
+        BodyType survivorType = IsCompactType(typeA) || IsCompactType(typeB)
+            ? (IsCompactType(typeA) ? typeA : typeB)
+            : (ma >= mb ? typeA : typeB);
+        soa.BodyTypeIndex[a] = (int)survivorType;
+
+        soa.Radius[a] = DensityModel.ComputeBodyRadius(soa.Mass[a], soa.Density[a], survivorType);
+        soa.IsActive[b] = false;
+        soa.IsCollidable[b] = false;
+        soa.AccX[b] = 0.0;
+        soa.AccY[b] = 0.0;
+        soa.AccZ[b] = 0.0;
+        soa.OldAccX[b] = 0.0;
+        soa.OldAccY[b] = 0.0;
+        soa.OldAccZ[b] = 0.0;
+
+        SyncBody(soa, bodies, a);
+        SyncBody(soa, bodies, b);
     }
 
     private static void ResolveImpulse(
@@ -386,7 +497,11 @@ public sealed class CollisionResolver
         double releasedEnergy,
         double combinedMass,
         double ejectedMass,
-        CollisionOutcome outcome)
+        CollisionOutcome outcome,
+        double bindingEnergy,
+        double expansionVelocity,
+        double luminosity,
+        bool eventHorizonAbsorption = false)
     {
         double px = (soa.PosX[a] + soa.PosX[b]) * 0.5;
         double py = (soa.PosY[a] + soa.PosY[b]) * 0.5;
@@ -396,12 +511,38 @@ public sealed class CollisionResolver
         {
             Position = new CelestialMechanics.Math.Vec3d(px, py, pz),
             ReleasedEnergy = releasedEnergy,
+            BindingEnergy = bindingEnergy,
+            ExpansionVelocity = expansionVelocity,
+            Luminosity = luminosity,
             CombinedMass = combinedMass,
             EjectedMass = ejectedMass,
             Outcome = outcome,
             PrimaryBodyIndex = a,
-            SecondaryBodyIndex = b
+            SecondaryBodyIndex = b,
+            EventHorizonAbsorption = eventHorizonAbsorption,
         });
+    }
+
+    private static void ConservePairMomentum(BodySoA soa, int a, int b, Vec3d desiredMomentum)
+    {
+        double ma = System.Math.Max(soa.Mass[a], 1e-15);
+        double mb = System.Math.Max(soa.Mass[b], 1e-15);
+
+        Vec3d current = new(
+            ma * soa.VelX[a] + mb * soa.VelX[b],
+            ma * soa.VelY[a] + mb * soa.VelY[b],
+            ma * soa.VelZ[a] + mb * soa.VelZ[b]);
+
+        Vec3d delta = desiredMomentum - current;
+        double invTotalMass = 1.0 / (ma + mb);
+
+        soa.VelX[a] += delta.X * invTotalMass;
+        soa.VelY[a] += delta.Y * invTotalMass;
+        soa.VelZ[a] += delta.Z * invTotalMass;
+
+        soa.VelX[b] += delta.X * invTotalMass;
+        soa.VelY[b] += delta.Y * invTotalMass;
+        soa.VelZ[b] += delta.Z * invTotalMass;
     }
 
     private static void SyncBody(BodySoA soa, PhysicsBody[] bodies, int i)

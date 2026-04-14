@@ -34,4 +34,10 @@ public sealed class NavigationService
 
         ViewChanged?.Invoke(CurrentView);
     }
+
+    public void NavigateToHome() => _appState.SetMode(AppMode.Home);
+
+    public void NavigateToSimulation() => _appState.SetMode(AppMode.Simulation);
+
+    public void NavigateToAnalysis() => _appState.SetMode(AppMode.Analysis);
 }

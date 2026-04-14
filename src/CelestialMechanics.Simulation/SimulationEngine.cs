@@ -1,4 +1,5 @@
 using CelestialMechanics.Physics.Types;
+using CelestialMechanics.Physics.Astrophysics;
 using CelestialMechanics.Physics.Extensions;
 using CelestialMechanics.Physics.Forces;
 using CelestialMechanics.Physics.Integrators;
@@ -79,6 +80,8 @@ public class SimulationEngine
             enablePostNewtonian:      _config.EnablePostNewtonian,
             enableAccretionDisks:     _config.EnableAccretionDisks,
             enableGravitationalWaves: _config.EnableGravitationalWaves,
+            enableBlackHolePhysics:   _config.EnableBlackHolePhysics,
+            enableThermalRadiation:   _config.EnableThermalRadiation,
             maxAccretionParticles:    _config.MaxAccretionParticles,
             enableJets:               _config.EnableJetEmission,
             jetThreshold:             _config.AccretionJetThreshold,
@@ -136,15 +139,25 @@ public class SimulationEngine
         remnant.Mass = remnantMass;
         remnant.Type = remnantMass >= 2.8 ? BodyType.BlackHole : BodyType.NeutronStar;
         remnant.Density = DensityModel.GetDefaultDensity(remnant.Type);
+        remnant.Temperature = remnant.Type == BodyType.BlackHole ? 3.0e4 : 1.2e6;
         remnant.RecalculateRadius();
+
+        double explosionFactor = remnant.Type == BodyType.BlackHole ? 1.8 : 4.0;
+        var profile = StellarExplosionModel.Compute(
+            progenitorMassSolar: originalMass,
+            progenitorRadiusAu: System.Math.Max(progenitor.Radius, 1e-9),
+            ejectaMassSolar: ejectaMass,
+            k: explosionFactor,
+            decayTauSeconds: 6.0 * 86400.0);
+        remnant.Luminosity = remnant.Type == BodyType.BlackHole
+            ? 0.0
+            : profile.LuminosityAt(0.0) * 0.08;
         list[index] = remnant;
 
         int spawnCount = System.Math.Clamp(ejectaCount, 8, 96);
         int nextId = list.Count == 0 ? 0 : list.Max(b => b.Id) + 1;
         double massPerEjecta = ejectaMass / spawnCount;
-        double launchSpeed = System.Math.Sqrt(
-            CelestialMechanics.Math.PhysicalConstants.G_Sim * System.Math.Max(originalMass, 1e-6) /
-            System.Math.Max(progenitor.Radius, 0.02));
+        double launchSpeed = CelestialMechanics.Math.UnitConversion.VelocityToSim(profile.ExpansionVelocityMps);
 
         for (int i = 0; i < spawnCount; i++)
         {
@@ -158,6 +171,9 @@ public class SimulationEngine
                 Radius = System.Math.Max(0.0025, progenitor.Radius * 0.08),
                 GravityStrength = progenitor.GravityStrength,
                 GravityRange = progenitor.GravityRange,
+                Temperature = 2.5e6,
+                HeatCapacity = 1.2e3,
+                Luminosity = profile.LuminosityAt(0.0) / spawnCount,
                 IsActive = true,
                 IsCollidable = true
             };

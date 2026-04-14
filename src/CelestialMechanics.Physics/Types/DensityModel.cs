@@ -1,4 +1,5 @@
 using CelestialMechanics.Math;
+using CelestialMechanics.Physics.Astrophysics;
 
 namespace CelestialMechanics.Physics.Types;
 
@@ -68,14 +69,7 @@ public static class DensityModel
         if (mass <= 0.0)
             return 0.0;
 
-        // In simulation units where G_sim = 1:
-        // r_s = 2 * G_sim * mass / c_sim²
-        // For visual purposes we use a scaled version that is visible at AU scale.
-        // Physical r_s for 1 M☉ ≈ 3 km ≈ 2e-11 AU — invisible at rendering scale.
-        // We use a minimum visual radius so black holes are visible.
-        double physicalRs = 2.0 * PhysicalConstants.G_Sim * mass;
-        // Scale up for visibility: at least 0.01 sim units
-        return System.Math.Max(physicalRs, 0.01 * System.Math.Cbrt(mass));
+        return SchwarzschildRadius.ComputeSimUnits(mass);
     }
 
     /// <summary>

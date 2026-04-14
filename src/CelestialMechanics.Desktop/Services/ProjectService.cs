@@ -17,6 +17,8 @@ public sealed class ProjectService
         PropertyNameCaseInsensitive = true,
     };
 
+    public bool IsSaved { get; private set; } = true;
+
     public ProjectInfo CreateProject(string name, string location)
     {
         string safeName = InputSanitizer.SanitizeDisplayText(name, 80);
@@ -40,6 +42,7 @@ public sealed class ProjectService
         WriteProjectMetadata(project);
         AddOrUpdateRecent(project);
         SetCurrentProject(project);
+        MarkSaved();
         return project;
     }
 
@@ -117,17 +120,71 @@ public sealed class ProjectService
         WriteProjectMetadata(project);
         AddOrUpdateRecent(project);
         SetCurrentProject(project);
+        MarkSaved();
         return project;
+    }
+
+    public bool DeleteProject(string path, bool deleteFiles)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch
+        {
+            return false;
+        }
+
+        try
+        {
+            if (deleteFiles && Directory.Exists(fullPath))
+            {
+                Directory.Delete(fullPath, recursive: true);
+            }
+
+            RemoveFromRecent(fullPath);
+
+            if (_currentProject != null &&
+                string.Equals(_currentProject.Path, fullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _currentProject = null;
+            }
+
+            IsSaved = true;
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void SetCurrentProject(ProjectInfo project)
     {
         _currentProject = project;
+        IsSaved = true;
     }
 
     public ProjectInfo? GetCurrentProject()
     {
         return _currentProject;
+    }
+
+    public void MarkDirty()
+    {
+        IsSaved = false;
+    }
+
+    public void MarkSaved()
+    {
+        IsSaved = true;
     }
 
     public static string GetDefaultProjectsRoot()
@@ -230,6 +287,13 @@ public sealed class ProjectService
             recent.RemoveRange(50, recent.Count - 50);
         }
 
+        WriteRecentProjects(recent);
+    }
+
+    private static void RemoveFromRecent(string fullPath)
+    {
+        var recent = ReadRecentProjects();
+        recent.RemoveAll(p => string.Equals(p.Path, fullPath, StringComparison.OrdinalIgnoreCase));
         WriteRecentProjects(recent);
     }
 }

@@ -354,7 +354,7 @@ public class RealisticCollisionTests
     }
 
     [Fact]
-    public void RealisticMode_HighEnergyImpact_EmitsFragmentationBurst()
+    public void RealisticMode_HighEnergyImpact_EmitsDisruptionBurst()
     {
         var bodies = new[]
         {
@@ -377,8 +377,13 @@ public class RealisticCollisionTests
 
         Assert.Equal(1, state.CollisionCount);
         Assert.NotEmpty(state.CollisionBursts);
-        Assert.Contains(state.CollisionBursts, b => b.Outcome == CollisionOutcome.Fragmentation && b.EjectedMass > 0.0);
-        Assert.True(bodies[0].IsActive && bodies[1].IsActive, "Fragmentation should keep primary fragments active.");
+        var disruption = Assert.Single(state.CollisionBursts.Where(
+            b => (b.Outcome == CollisionOutcome.Fragmentation || b.Outcome == CollisionOutcome.CatastrophicDisruption) && b.EjectedMass > 0.0));
+
+        if (disruption.Outcome == CollisionOutcome.Fragmentation)
+            Assert.True(bodies[0].IsActive && bodies[1].IsActive, "Fragmentation should keep primary fragments active.");
+        else
+            Assert.True(bodies[0].IsActive || bodies[1].IsActive, "Catastrophic disruption should leave at least one survivor fragment.");
     }
 
     [Fact]

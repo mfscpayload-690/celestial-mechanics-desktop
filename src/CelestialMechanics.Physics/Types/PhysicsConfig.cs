@@ -236,6 +236,16 @@ public class PhysicsConfig
     /// </summary>
     public bool EnableJetEmission { get; set; } = false;
 
+    /// <summary>
+    /// Enables event-horizon absorption and tidal disruption near black holes.
+    /// </summary>
+    public bool EnableBlackHolePhysics { get; set; } = true;
+
+    /// <summary>
+    /// Enables thermal/radiative body updates (temperature + luminosity evolution).
+    /// </summary>
+    public bool EnableThermalRadiation { get; set; } = true;
+
     /// <summary>Maximum number of accretion disk particles per compact object.</summary>
     public int MaxAccretionParticles { get; set; } = 5000;
 

@@ -6,6 +6,7 @@ using CelestialMechanics.Physics.Integrators;
 using CelestialMechanics.Physics.SoA;
 using CelestialMechanics.Physics.Types;
 using CelestialMechanics.Physics.Validation;
+using System.Diagnostics;
 
 namespace CelestialMechanics.Physics.Solvers;
 
@@ -60,7 +61,13 @@ public class NBodySolver
     // ── Collision system (Phase 4) ─────────────────────────────────────────────
     private readonly CollisionDetector _collisionDetector = new();
     private readonly CollisionResolver _collisionResolver = new();
+    private readonly BlackHoleInteractionSystem _blackHoleInteraction = new();
+    private readonly ThermalRadiationSystem _thermalRadiation = new();
+    private readonly List<CollisionBurstEvent> _transientBursts = new(16);
+    private int _lastBlackHoleInteractionCount;
     private bool _enableCollisions;
+    private bool _enableBlackHolePhysics;
+    private bool _enableThermalRadiation;
     private CollisionMode _collisionMode = CollisionMode.MergeOnly;
     private double _collisionRestitution = 0.15;
     private double _fragmentationSpecificEnergyThreshold = 0.6;
@@ -126,6 +133,8 @@ public class NBodySolver
         _enablePostNewtonian = false;
         _enableAccretionDisks = false;
         _enableGravitationalWaves = false;
+        _enableBlackHolePhysics = false;
+        _enableThermalRadiation = false;
         _softening           = 1e-4;
 
         _currentTime      = 0.0;
@@ -185,6 +194,8 @@ public class NBodySolver
                              bool enablePostNewtonian = false,
                              bool enableAccretionDisks = false,
                              bool enableGravitationalWaves = false,
+                             bool enableBlackHolePhysics = false,
+                             bool enableThermalRadiation = false,
                              int maxAccretionParticles = 5000,
                              bool enableJets = false,
                              double jetThreshold = 0.1,
@@ -209,6 +220,9 @@ public class NBodySolver
         _enablePostNewtonian      = enablePostNewtonian;
         _enableAccretionDisks     = enableAccretionDisks;
         _enableGravitationalWaves = enableGravitationalWaves;
+        _enableBlackHolePhysics   = enableBlackHolePhysics;
+        _enableThermalRadiation   = enableThermalRadiation;
+        _thermalRadiation.Enabled = _enableThermalRadiation;
 
         _collisionDetector.Configure(_enableCollisionBroadPhase, _collisionBroadPhaseThreshold);
         _collisionResolver.Configure(
@@ -292,6 +306,16 @@ public class NBodySolver
     /// </summary>
     public SimulationState Step(PhysicsBody[] bodies, double dt)
     {
+        _transientBursts.Clear();
+        _lastBlackHoleInteractionCount = 0;
+
+        IForceCalculator[] fc = GetForcesCache();
+        double keBefore = _energy.ComputeKE(bodies);
+        double peBefore = _energy.ComputePE(bodies, fc);
+        double totalEnergyBefore = keBefore + peBefore;
+        Vec3d momentumBefore = _energy.ComputeMomentum(bodies);
+        double angularBefore = _energy.ComputeAngularMomentum(bodies);
+
         if (_useSoA)
             StepSoA(bodies, dt);
         else
@@ -301,13 +325,22 @@ public class NBodySolver
         if (_enableAccretionDisks && _accretionDisk != null)
             _accretionDisk.Update(bodies, dt, _currentTime);
 
+        if (_enableThermalRadiation)
+            _thermalRadiation.Update(bodies, dt);
+
         _currentTime += dt;
 
-        IForceCalculator[] fc = GetForcesCache();
         double ke          = _energy.ComputeKE(bodies);
         double pe          = _energy.ComputePE(bodies, fc);
         double totalEnergy = ke + pe;
         Vec3d  momentum    = _energy.ComputeMomentum(bodies);
+        double angularAfter = _energy.ComputeAngularMomentum(bodies);
+
+        double stepEnergyDelta = totalEnergyBefore - totalEnergy;
+        double stepMomentumDelta = (momentumBefore - momentum).Length;
+        double stepAngularDelta = System.Math.Abs(angularBefore - angularAfter);
+
+        Debug.WriteLine($"[Conservation] ΔE(step)={stepEnergyDelta:E6}, Δ|P|={stepMomentumDelta:E6}, Δ|L|={stepAngularDelta:E6}");
 
         if (!_initialEnergySet)
         {
@@ -323,6 +356,10 @@ public class NBodySolver
         for (int i = 0; i < bodies.Length; i++)
             if (bodies[i].IsActive) activeCount++;
 
+        CollisionBurstEvent[] bursts = _transientBursts.Count > 0
+            ? _transientBursts.ToArray()
+            : Array.Empty<CollisionBurstEvent>();
+
         return new SimulationState
         {
             Time             = _currentTime,
@@ -332,11 +369,12 @@ public class NBodySolver
             PotentialEnergy  = pe,
             TotalMomentum    = momentum,
             EnergyDrift      = energyDrift,
-            CollisionCount   = _collisionResolver.LastCollisionCount,
-            CollisionBursts  = _collisionResolver.LastBurstEvents.Count > 0
-                ? _collisionResolver.LastBurstEvents.ToArray()
-                : Array.Empty<CollisionBurstEvent>(),
-            CurrentDt        = dt
+            CollisionCount   = _collisionResolver.LastCollisionCount + _lastBlackHoleInteractionCount,
+            CollisionBursts  = bursts,
+            CurrentDt        = dt,
+            StepEnergyDelta = stepEnergyDelta,
+            StepMomentumDelta = stepMomentumDelta,
+            StepAngularMomentumDelta = stepAngularDelta,
         };
     }
 
@@ -351,6 +389,21 @@ public class NBodySolver
         var backend = SelectBackend();
         LastBackendName = $"SoA:{backend.GetType().Name}";
         _soaIntegrator.Step(_soaBodies, backend, _softening, dt);
+        _transientBursts.Clear();
+        _lastBlackHoleInteractionCount = 0;
+
+        if (_enableBlackHolePhysics)
+        {
+            var bhBursts = _blackHoleInteraction.Process(
+                _soaBodies,
+                bodies,
+                dt,
+                _currentTime,
+                _enableAccretionDisks ? _accretionDisk : null);
+            _lastBlackHoleInteractionCount = bhBursts.Count;
+            for (int i = 0; i < bhBursts.Count; i++)
+                _transientBursts.Add(bhBursts[i]);
+        }
 
         // ── Collision detection and resolution (after integration) ────────
         if (_enableCollisions)
@@ -367,6 +420,10 @@ public class NBodySolver
                 _currentTime,
                 _enableAccretionDisks ? _accretionDisk : null,
                 promoteCompactRemnants: _enableAccretionDisks);
+
+            var collisionBursts = _collisionResolver.LastBurstEvents;
+            for (int i = 0; i < collisionBursts.Count; i++)
+                _transientBursts.Add(collisionBursts[i]);
         }
 
         _soaBodies.CopyTo(bodies);
